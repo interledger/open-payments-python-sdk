@@ -1,8 +1,12 @@
 from enum import Enum
-from typing import Any, List, Optional, Union
+from typing import Any, Optional, Union
+from pydantic import AnyUrl, BaseModel, ConfigDict, Field, RootModel, model_validator
 
-from pydantic import AnyUrl, BaseModel, ConfigDict, Field, RootModel, conint, model_validator, root_validator
+from .resource import Amount
 
+###################################################################################################
+# ENUMERATED TYPES
+###################################################################################################
 
 class TypeIncoming(Enum):
     incoming_payment = "incoming-payment"
@@ -15,21 +19,6 @@ class ActionIncoming(Enum):
     read_all = "read-all"
     list = "list"
     list_all = "list-all"
-
-
-class AccessIncoming(BaseModel):
-    type: TypeIncoming = Field(
-        ...,
-        description="The type of resource request as a string.  This field defines which other fields are allowed in the request object.",
-    )
-    actions: List[ActionIncoming] = Field(
-        ...,
-        description="The types of actions the client instance will take at the RS as an array of strings.",
-    )
-    identifier: Optional[AnyUrl] = Field(
-        None,
-        description="A string identifier indicating a specific resource at the RS.",
-    )
 
 
 class TypeOutgoing(Enum):
@@ -54,24 +43,16 @@ class ActionQuote(Enum):
     read_all = "read-all"
 
 
-class AccessQuote(BaseModel):
-    type: TypeQuote = Field(
-        ...,
-        description="The type of resource request as a string.  This field defines which other fields are allowed in the request object.",
-    )
-    actions: List[ActionQuote] = Field(
-        ...,
-        description="The types of actions the client instance will take at the RS as an array of strings.",
-    )
+class StartEnum(Enum):
+    redirect = "redirect"
 
 
-class Client(RootModel[str]):
-    root: str = Field(
-        ...,
-        description="Wallet address of the client instance that is making this request.\n\nWhen sending a non-continuation request to the AS, the client instance MUST identify itself by including the client field of the request and by signing the request.\n\nA JSON Web Key Set document, including the public key that the client instance will use to protect this request and any continuation requests at the AS and any user-facing information about the client instance used in interactions, MUST be available at the wallet address + `/jwks.json` url.\n\nIf sending a grant initiation request that requires RO interaction, the wallet address MUST serve necessary client display information.",
-        title="client",
-    )
+class Method(Enum):
+    redirect = "redirect"
 
+###################################################################################################
+# MODEL UTILITIES
+###################################################################################################
 
 class AccessTokenContinue(BaseModel):
     value: str
@@ -92,14 +73,6 @@ class Continue(BaseModel):
     )
 
 
-class StartEnum(Enum):
-    redirect = "redirect"
-
-
-class Method(Enum):
-    redirect = "redirect"
-
-
 class Finish(BaseModel):
     method: Method = Field(
         ...,
@@ -116,7 +89,7 @@ class Finish(BaseModel):
 
 
 class InteractRequest(BaseModel):
-    start: List[StartEnum] = Field(
+    start: list[StartEnum] = Field(
         ..., description="Indicates how the client instance can start an interaction."
     )
     finish: Optional[Finish] = Field(
@@ -130,9 +103,27 @@ class InteractResponse(BaseModel):
     finish: str = Field(..., description="Unique key to secure the callback.")
 
 
-class Interval(RootModel[str]):
-    root: str = Field(
-        ...,
+class LimitsOutgoing(BaseModel):
+    receiver: Optional[AnyUrl] = Field(
+        None,
+        description="The URL of the incoming payment that is being paid.",
+        examples=[
+            "https://ilp.interledger-test.dev/incoming-payments/08394f02-7b7b-45e2-b645-51d04e7c330c",
+            "http://ilp.interledger-test.dev/incoming-payments/08394f02-7b7b-45e2-b645-51d04e7c330c",
+            "https://ilp.interledger-test.dev/incoming-payments/1",
+        ],
+        title="Receiver",
+    )
+    debitAmount: Optional[Amount] = Field(
+        None,
+        description="All amounts are maxima, i.e. multiple payments can be created under a grant as long as the total amounts of these payments do not exceed the maximum amount per interval as specified in the grant.",
+    )
+    receiveAmount: Optional[Amount] = Field(
+        None,
+        description="All amounts are maxima, i.e. multiple payments can be created under a grant as long as the total amounts of these payments do not exceed the maximum amount per interval as specified in the grant.",
+    )
+    interval: Optional[str] = Field(
+        None,
         description="[ISO8601 repeating interval](https://en.wikipedia.org/wiki/ISO_8601#Repeating_intervals)",
         examples=[
             "R11/2022-08-24T14:15:22Z/P1M",
@@ -143,98 +134,39 @@ class Interval(RootModel[str]):
     )
 
 
-class Receiver(RootModel[AnyUrl]):
-    root: AnyUrl = Field(
+class InteractRef(BaseModel):
+    interact_ref: str = Field(
         ...,
-        description="The URL of the incoming payment that is being paid.",
-        examples=[
-            "https://ilp.interledger-test.dev/incoming-payments/08394f02-7b7b-45e2-b645-51d04e7c330c",
-            "http://ilp.interledger-test.dev/incoming-payments/08394f02-7b7b-45e2-b645-51d04e7c330c",
-            "https://ilp.interledger-test.dev/incoming-payments/1",
-        ],
-        title="Receiver",
+        description="The interaction reference generated for this interaction by the AS."
     )
 
+###################################################################################################
+# MODEL CORE DEFINITIONS
+###################################################################################################
 
-class AssetCode(RootModel[str]):
-    root: str = Field(
+class AccessIncoming(BaseModel):
+    type: TypeIncoming = Field(
         ...,
-        description="The assetCode is a code that indicates the underlying asset. This SHOULD be an ISO4217 currency code.",
-        title="Asset code",
+        description="The type of resource request as a string.  This field defines which other fields are allowed in the request object.",
     )
-
-
-class AssetScale(RootModel[conint(ge=0, le=255)]):
-    root: conint(ge=0, le=255) = Field(
+    actions: list[ActionIncoming] = Field(
         ...,
-        description="The scale of amounts denoted in the corresponding asset code.",
-        title="Asset scale",
+        description="The types of actions the client instance will take at the RS as an array of strings.",
     )
-
-
-class WalletAddress(RootModel[AnyUrl]):
-    root: AnyUrl = Field(
-        ...,
-        description="URL of a wallet address hosted by a Rafiki instance.",
-        title="Wallet Address",
-    )
-
-
-class Amount(BaseModel):
-    value: str = Field(
-        ...,
-        description="The value is an unsigned 64-bit integer amount, represented as a string.",
-    )
-    assetCode: AssetCode
-    assetScale: AssetScale
-
-
-class LimitsOutgoing1(BaseModel):
-    receiver: Optional[Receiver] = None
-    debitAmount: Optional[Amount] = Field(
+    identifier: Optional[AnyUrl] = Field(
         None,
-        description="All amounts are maxima, i.e. multiple payments can be created under a grant as long as the total amounts of these payments do not exceed the maximum amount per interval as specified in the grant.",
+        description="A string identifier indicating a specific resource at the RS.",
     )
-    receiveAmount: Optional[Amount] = Field(
-        None,
-        description="All amounts are maxima, i.e. multiple payments can be created under a grant as long as the total amounts of these payments do not exceed the maximum amount per interval as specified in the grant.",
-    )
-    interval: Optional[Interval] = None
 
 
-class LimitsOutgoing2(BaseModel):
-    receiver: Optional[Receiver] = None
-    debitAmount: Amount = Field(
+class AccessQuote(BaseModel):
+    type: TypeQuote = Field(
         ...,
-        description="All amounts are maxima, i.e. multiple payments can be created under a grant as long as the total amounts of these payments do not exceed the maximum amount per interval as specified in the grant.",
+        description="The type of resource request as a string.  This field defines which other fields are allowed in the request object.",
     )
-    receiveAmount: Optional[Amount] = Field(
-        None,
-        description="All amounts are maxima, i.e. multiple payments can be created under a grant as long as the total amounts of these payments do not exceed the maximum amount per interval as specified in the grant.",
-    )
-    interval: Optional[Interval] = None
-
-
-class LimitsOutgoing3(BaseModel):
-    receiver: Optional[Receiver] = None
-    debitAmount: Optional[Amount] = Field(
-        None,
-        description="All amounts are maxima, i.e. multiple payments can be created under a grant as long as the total amounts of these payments do not exceed the maximum amount per interval as specified in the grant.",
-    )
-    receiveAmount: Amount = Field(
+    actions: list[ActionQuote] = Field(
         ...,
-        description="All amounts are maxima, i.e. multiple payments can be created under a grant as long as the total amounts of these payments do not exceed the maximum amount per interval as specified in the grant.",
-    )
-    interval: Optional[Interval] = None
-
-
-class LimitsOutgoing(
-    RootModel[Union[LimitsOutgoing1, LimitsOutgoing2, LimitsOutgoing3]]
-):
-    root: Union[LimitsOutgoing1, LimitsOutgoing2, LimitsOutgoing3] = Field(
-        ...,
-        description="Open Payments specific property that defines the limits under which outgoing payments can be created.",
-        title="limits-outgoing",
+        description="The types of actions the client instance will take at the RS as an array of strings.",
     )
 
 
@@ -243,7 +175,7 @@ class AccessOutgoing(BaseModel):
         ...,
         description="The type of resource request as a string.  This field defines which other fields are allowed in the request object.",
     )
-    actions: List[ActionOutgoing] = Field(
+    actions: list[ActionOutgoing] = Field(
         ...,
         description="The types of actions the client instance will take at the RS as an array of strings.",
     )
@@ -253,25 +185,7 @@ class AccessOutgoing(BaseModel):
     limits: Optional[LimitsOutgoing] = None
 
 
-class AccessItem(RootModel[Union[AccessIncoming, AccessOutgoing, AccessQuote]]):
-    root: Union[AccessIncoming, AccessOutgoing, AccessQuote] = Field(
-        ...,
-        description="The access associated with the access token is described using objects that each contain multiple dimensions of access.",
-    )
-
-
-class Access(RootModel[List[AccessItem]]):
-    root: List[AccessItem] = Field(
-        ...,
-        description="A description of the rights associated with this access token.",
-        max_length=3,
-    )
-
-
 class AccessToken(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
     value: str = Field(
         ...,
         description="The value of the access token as a string.  The value is opaque to the client instance.  The value SHOULD be limited to ASCII characters to facilitate transmission over HTTP headers within other protocols without requiring additional encoding.",
@@ -284,24 +198,32 @@ class AccessToken(BaseModel):
         None,
         description="The number of seconds in which the access will expire.  The client instance MUST NOT use the access token past this time.  An RS MUST NOT accept an access token past this time.",
     )
-    access: Access
+    access: list[Union[AccessIncoming, AccessOutgoing, AccessQuote]]
+    model_config = ConfigDict(
+        extra="forbid",
+    )
 
 
 class GrantRequestAccessToken(BaseModel):
-    access: Access
+    access: list[Union[AccessIncoming, AccessOutgoing, AccessQuote]]
 
 
 class GrantRequest(BaseModel):
     access_token: GrantRequestAccessToken
-    client: Client
+    client: Optional[str] = Field(
+        None,
+        description="Wallet address of the client instance that is making this request.\n\nWhen sending a non-continuation request to the AS, the client instance MUST identify itself by including the client field of the request and by signing the request.\n\nA JSON Web Key Set document, including the public key that the client instance will use to protect this request and any continuation requests at the AS and any user-facing information about the client instance used in interactions, MUST be available at the wallet address + `/jwks.json` url.\n\nIf sending a grant initiation request that requires RO interaction, the wallet address MUST serve necessary client display information.",
+        title="client",
+    )
     interact: Optional[InteractRequest] = None
+
 
 class ReservedKeyMappingModel(BaseModel):
     """
     Base class that maps 'continue' to 'cont' in incoming data.
     """
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
     def replace_continue_key(cls, values: Any) -> Any:
         """
@@ -310,6 +232,7 @@ class ReservedKeyMappingModel(BaseModel):
         if isinstance(values, dict) and "continue" in values:
             values["cont"] = values.pop("continue")
         return values
+
 
 class InteractionInstructionsResponse(ReservedKeyMappingModel):
     interact: InteractResponse
@@ -322,18 +245,20 @@ class GrantResponse(ReservedKeyMappingModel):
 
 
 class Grant(RootModel[Union[InteractionInstructionsResponse, GrantResponse]]):
+    """
+    Reference https://docs.pydantic.dev/latest/concepts/models/#rootmodel-and-custom-root-types
+
+    NOTE: `__getattr__` allows us to bypass the irritating `.root` attribute and
+          get direct to the fields.
+    """
     root: Union[InteractionInstructionsResponse, GrantResponse] = Field(
         ...,
         description="The grant object, either interaction instructions or grant response",
         title="grant",
     )
 
-
-class InteractRef(BaseModel):
-    interact_ref: str = Field(
-        ...,
-        description="The interaction reference generated for this interaction by the AS."
-    )
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self.root, item)
 
 
 class GrantContinueResponse(BaseModel):

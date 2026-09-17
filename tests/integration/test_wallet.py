@@ -1,4 +1,4 @@
-def test_get_wallet_address(op_client,wallet_address_server):
+def test_get_wallet_address(op_client, wallet_address_server):
     """
     Test get wallet address
     """
@@ -7,7 +7,7 @@ def test_get_wallet_address(op_client,wallet_address_server):
     assert wallet.assetCode is not None
 
 
-def test_get_wallet_address_keys(op_client,wallet_address_server):
+def test_get_wallet_address_keys(op_client, wallet_address_server):
     """
     Test get jwks.json
     """

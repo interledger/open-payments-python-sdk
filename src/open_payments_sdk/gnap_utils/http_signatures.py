@@ -2,16 +2,17 @@
 HTTP Signatures Helper functions
 """
 
-from http_message_signatures import HTTPSignatureKeyResolver
-from http_message_signatures.resolvers import HTTPSignatureComponentResolver
+from http_message_signatures.resolvers import HTTPSignatureComponentResolver, HTTPSignatureKeyResolver
 from http_message_signatures.structures import CaseInsensitiveDict
 
 from open_payments_sdk.gnap_utils.keys import KeyManager
+
 
 class OPKeyResolver(HTTPSignatureKeyResolver):
     """
     Key Resolver Class
     """
+
     def __init__(self, keyid: str, private_key: str):
         super().__init__()
         self.keys = {keyid: private_key.encode("utf-8")}
@@ -30,14 +31,15 @@ class OPKeyResolver(HTTPSignatureKeyResolver):
         """
         return self.keys[key_id]
 
-   
+
 class PatchedHTTPSignatureComponentResolver(HTTPSignatureComponentResolver):
     """
     Component Resolver to be used by http signing logic. The upstream resolver class has a bug which I fixed via a PR
     https://github.com/pyauth/http-message-signatures/pull/18
-    
+
     The new package is not yet deployed. In the meantime this class fixes the bug and it works in this package
     """
+
     def __init__(self, message):
         """
         Do not call upstream class constructor because it is buggy
@@ -48,7 +50,7 @@ class PatchedHTTPSignatureComponentResolver(HTTPSignatureComponentResolver):
             self.message_type = "response"
         self.url = str(message.url)
         self.headers = CaseInsensitiveDict(message.headers)
-   
+
     def get_request_response(self, *, key: str):
         """
         Required implementation from abstract class. Since it is not used in the lib. Just pass
