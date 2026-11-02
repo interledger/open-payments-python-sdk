@@ -70,7 +70,7 @@ class DidDocument(BaseModel):
 
 class WalletAddress(BaseModel):
     model_config = ConfigDict(
-        extra="allow",
+        extra="forbid",
     )
     id: AnyUrl = Field(..., description="The URL identifying the wallet address.")
     publicName: Optional[str] = Field(
@@ -86,6 +86,10 @@ class WalletAddress(BaseModel):
     resourceServer: AnyUrl = Field(
         ...,
         description="The URL of the resource server endpoint for performing Open Payments with this wallet address.",
+    )
+    cardService: Optional[AnyUrl] = Field(
+        None,
+        description="The URL of the card service endpoint for this wallet address.",
     )
 
 

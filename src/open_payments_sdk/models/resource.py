@@ -143,8 +143,8 @@ class OutgoingPayment(BaseModel):
     createdAt: datetime = Field(
         ..., description="The date and time when the outgoing payment was created."
     )
-    updatedAt: datetime = Field(
-        ..., description="The date and time when the outgoing payment was updated."
+    updatedAt: Optional[datetime] = Field(
+        None, description="The date and time when the outgoing payment was updated."
     )
 
 
@@ -191,8 +191,8 @@ class OutgoingPaymentWithSpentAmounts(BaseModel):
     createdAt: datetime = Field(
         ..., description="The date and time when the outgoing payment was created."
     )
-    updatedAt: datetime = Field(
-        ..., description="The date and time when the outgoing payment was updated."
+    updatedAt: Optional[datetime] = Field(
+        None, description="The date and time when the outgoing payment was updated."
     )
 
 
@@ -256,8 +256,8 @@ class IncomingPayment(BaseModel):
     createdAt: datetime = Field(
         ..., description="The date and time when the incoming payment was created."
     )
-    updatedAt: datetime = Field(
-        ..., description="The date and time when the incoming payment was updated."
+    updatedAt: Optional[datetime] = Field(
+        None, description="The date and time when the incoming payment was updated."
     )
 
 
@@ -271,9 +271,9 @@ class IncomingPaymentWithMethods(IncomingPayment):
 
 class IncomingPaymentRequest(BaseModel):
     walletAddress: WalletAddress
-    incomingAmount: Optional[Amount]
-    expiresAt: Optional[datetime]
-    metadata: Optional[Dict[str, Any]]
+    incomingAmount: Optional[Amount] = None
+    expiresAt: Optional[datetime] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class IncomingPaymentResponse(
@@ -283,16 +283,16 @@ class IncomingPaymentResponse(
 
 class PaymentListQuery(BaseModel):
     walletAddress: WalletAddress
-    cursor: Optional[str] = Field(min_length=1)
-    first: Optional[int] = Field(ge=1, le=100)
-    last: Optional[int] = Field(ge=1, le=100)
+    cursor: Optional[str] = Field(default=None, min_length=1)
+    first: Optional[int] = Field(default=None, ge=1, le=100)
+    last: Optional[int] = Field(default=None, ge=1, le=100)
 
 
 class Pagination(BaseModel):
     startCursor: str = Field(min_length=1)
     endCursor: str = Field(min_length=1)
     hasNextPage: Optional[bool]
-    hasPrevPage: Optional[bool]
+    hasPreviousPage: Optional[bool]
 
 
 class PaginatedIncomingPayments(BaseModel):
@@ -333,6 +333,7 @@ class QuoteRequestBase(BaseModel):
     @classmethod
     def check_path(cls, v):
         assert "/incoming-payments/" in v.path
+        return v
 
 
 class QuoteFixedReceive(QuoteRequestBase):

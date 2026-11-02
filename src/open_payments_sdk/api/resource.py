@@ -9,6 +9,7 @@ from open_payments_sdk.models.resource import (IncomingPayment,
                                                IncomingPaymentResponse,
                                                OutgoingPayment,
                                                OutgoingPaymentRequest,
+                                               OutgoingPaymentWithSpentAmounts,
                                                PaginatedIncomingPayments,
                                                PaginatedOutgoingPayments,
                                                PaymentListQuery, Quote,
@@ -134,7 +135,7 @@ class OutgoingPayments(SecurityBase):
             self, payment: OutgoingPaymentRequest,
             resource_server_endpoint: str,
             access_token: str
-        ) -> OutgoingPayment:
+        ) -> OutgoingPaymentWithSpentAmounts:
         """
         Create an Outgoing Payment Resource
         """
@@ -154,7 +155,7 @@ class OutgoingPayments(SecurityBase):
         request = self.set_content_digest(request=request)
         request = self.sign_request(request,("content-type","content-digest","content-length","authorization",*get_default_covered_components()))
         response = self.http_client.send(request=request)
-        return OutgoingPayment.model_validate(response.json())
+        return OutgoingPaymentWithSpentAmounts.model_validate(response.json())
 
     def get_outgoing_payments(
         self,
@@ -177,15 +178,15 @@ class OutgoingPayments(SecurityBase):
             headers=req_headers,
             params=query_params
         )
-        response = request = self.sign_request(request,("authorization",*get_default_covered_components()))
-        self.http_client.send(request=request)
+        request = self.sign_request(request,("authorization",*get_default_covered_components()))
+        response = self.http_client.send(request=request)
         return PaginatedOutgoingPayments.model_validate(response.json())
 
     def get_outgoing_payment(
             self, payment_id: str,
             resource_server_endpoint: str,
             access_token: str
-        ) -> OutgoingPayment:
+        ) -> OutgoingPaymentWithSpentAmounts:
         """
         Get Outgoing Payment
         """
@@ -201,7 +202,7 @@ class OutgoingPayments(SecurityBase):
         )
         request = self.sign_request(request,("authorization",*get_default_covered_components()))
         response = self.http_client.send(request=request)
-        return OutgoingPayment.model_validate(response.json())
+        return OutgoingPaymentWithSpentAmounts.model_validate(response.json())
 
 
 class Quotes(SecurityBase):
@@ -247,7 +248,7 @@ class Quotes(SecurityBase):
         """
         Get a Quote
         """
-        base_url = resource_server_endpoint.strip("/")
+        base_url = resource_server_endpoint.rstrip("/")
         url = f"{base_url}/quotes/{quote_id}"
         req_headers = {
             **self.get_auth_header(access_token=access_token)

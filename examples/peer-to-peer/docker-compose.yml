@@ -1,0 +1,34 @@
+services:
+  callback-server:
+    build:
+      context: ../..
+      dockerfile: examples/peer-to-peer/Dockerfile
+    command: python examples/peer-to-peer/callback_server.py
+    ports:
+      - "3999:3999"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3999/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - ./:/app/examples/peer-to-peer/
+
+  example:
+    build:
+      context: ../..
+      dockerfile: examples/peer-to-peer/Dockerfile
+    command: python examples/peer-to-peer/run.py
+    stdin_open: true
+    tty: true
+    depends_on:
+      callback-server:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - OP_PRIVATE_KEY_PATH=/app/private.key
+      - CALLBACK_SERVER_URL=http://callback-server:3999
+    volumes:
+      - ../..:/app
+      - ${OP_PRIVATE_KEY_PATH}:/app/private.key:ro
