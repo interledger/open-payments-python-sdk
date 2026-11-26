@@ -40,6 +40,33 @@ The SDK requires cryptography 50.x. Upstream cryptography no longer supports Int
 > poetry install
 ```
 
+## Running tests
+
+The default suite is offline and blocks real network requests. It uses deterministic test keys and mock HTTP responses, without reading live credentials or requiring a browser:
+
+```bash
+poetry install
+poetry run python -m pytest -ra
+```
+
+Live tests use only accounts you configure. Install their optional dependencies, copy `tests/.env.example` to `tests/.env`, and fill in the wallet and registered key values before opting in:
+
+```bash
+poetry install --with live
+poetry run python -m pytest tests/integration --run-live -ra
+```
+
+Browser workflows additionally require Chrome, browser tooling, and configured buyer credentials:
+
+```bash
+poetry install --with live,browser
+poetry run python -m pytest tests/process --run-live --run-browser -ra
+```
+
+Tests with missing optional dependencies or configuration report skips. The incoming-payment cases still provide the contributed scaffold; complete endpoint assertions remain follow-up work. The unimplemented interactive-grant case is explicitly reported as skipped.
+
+The peer-to-peer example uses `poetry install --with examples`. Notebook tooling is available separately through `poetry install --with notebooks`.
+
 ## Usage
 
 To use this SDK, you will first need to install it in your project. Currently, you will need to build from source but once it is hosted on PyPi you will be able to install it with `pip`.

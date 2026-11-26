@@ -1,5 +1,7 @@
-from pydantic import Field
+from pathlib import Path
 from typing import Optional
+
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,7 +15,9 @@ class Settings(BaseSettings):
     TEST_PRODUCT_VALUE: str = Field(default="2500")
     TEST_PRODUCT_VOLUME: int = Field(default=2)
     TEST_REDIRECT_URI: str = Field(default="http://localhost/redirect/")
-    model_config = SettingsConfigDict(case_sensitive=True, env_file="./tests/.env", env_file_encoding="utf-8")
-
-
-settings = Settings()
+    model_config = SettingsConfigDict(
+        case_sensitive=True,
+        env_file=Path(__file__).with_name(".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )

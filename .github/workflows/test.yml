@@ -52,8 +52,8 @@ jobs:
       - name: Install dependencies
         run: python -m poetry install --no-interaction
 
-      - name: Run Unit Tests
-        run: python -m poetry run python -m pytest tests/unit/
+      - name: Run offline tests
+        run: python -m poetry run python -m pytest -ra
 
   audit:
     runs-on: ubuntu-latest

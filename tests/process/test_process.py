@@ -1,18 +1,22 @@
 import time
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
-from config import settings
+import pytest
+
 from open_payments_sdk.process.crud import OpenPaymentsProcessor
 
-def interactive_purchase_approval(purchase_endpoint, accept=True) -> str | None:
-    if not settings.TEST_BUYER_LOGIN or not settings.TEST_BUYER_PASSWORD:
-        raise ValueError("A test buyer login and password are required.")
+pytestmark = [pytest.mark.live, pytest.mark.browser]
+
+
+def interactive_purchase_approval(
+    purchase_endpoint, browser_driver, settings, accept=True
+) -> str | None:
+    from selenium.webdriver.common.by import By
+
     response_url = None
     if not isinstance(purchase_endpoint, str):
         purchase_endpoint = str(purchase_endpoint)
-    driver = webdriver.Chrome()
+    driver = browser_driver
     driver.get(purchase_endpoint)
     driver.implicitly_wait(10)
     if "/auth/login" in driver.current_url:
@@ -27,17 +31,22 @@ def interactive_purchase_approval(purchase_endpoint, accept=True) -> str | None:
         driver.find_element(By.CSS_SELECTOR, "button[aria-label='decline']").click()
     time.sleep(2)
     response_url = str(driver.current_url)
-    driver.quit()
     return response_url
 
-def test_one_time_purchase(op_seller_account):
+
+def test_one_time_purchase(op_seller_account, live_settings, browser_driver):
+    settings = live_settings
     ###################################################################################################
     # REQUEST PURCHASE ENDPOINT
     ###################################################################################################
     if not settings.TEST_BUYER_WALLET or not settings.TEST_REDIRECT_URI:
         raise ValueError("A test buyer wallet and redirect URI are required.")
     # 1. SET UP THE ORDER
-    order = OpenPaymentsProcessor(seller=op_seller_account, buyer=settings.TEST_BUYER_WALLET, redirect_uri=settings.TEST_REDIRECT_URI)
+    order = OpenPaymentsProcessor(
+        seller=op_seller_account,
+        buyer=settings.TEST_BUYER_WALLET,
+        redirect_uri=settings.TEST_REDIRECT_URI,
+    )
     amount = str(int(settings.TEST_PRODUCT_VALUE) * settings.TEST_PRODUCT_VOLUME)
     # 2. SELLER INCOMING PAYMENT PROCESS
     incoming_payment_response = order.request_incoming_payment(amount=amount)
@@ -50,9 +59,13 @@ def test_one_time_purchase(op_seller_account):
     ###################################################################################################
     # HAND OFF FOR INTERACTIVE PURCHASE APPROVAL
     ###################################################################################################
-    response_url = interactive_purchase_approval(purchase_endpoint)
+    response_url = interactive_purchase_approval(
+        purchase_endpoint, browser_driver, settings
+    )
     if not response_url:
-        raise ValueError("Something went wrong during interactive purchase approval. Check the endpoints.")
+        raise ValueError(
+            "Something went wrong during interactive purchase approval. Check the endpoints."
+        )
     response_url = urlparse(response_url)
     received_hash = parse_qs(response_url.query)["hash"][0]
     interact_ref = parse_qs(response_url.query)["interact_ref"][0]
@@ -64,8 +77,16 @@ def test_one_time_purchase(op_seller_account):
     # 1. RECOVER THE PENDING PAYMENT FROM THE KEY
     pending_payment = order.pending_payment
     # Ordinarily, use `pending_payment.seller` to recover stored seller data
-    payment = OpenPaymentsProcessor(seller=op_seller_account, buyer=str(pending_payment.buyer.id), redirect_uri=settings.TEST_REDIRECT_URI)
+    payment = OpenPaymentsProcessor(
+        seller=op_seller_account,
+        buyer=str(pending_payment.buyer.id),
+        redirect_uri=settings.TEST_REDIRECT_URI,
+    )
     # 5. COMPLETE OUTGOING PAYMENT
     # This depends on the app ... can divide up payments between collaborators, take platform fees, etc.
     # Not fully tested here, yet
-    incoming_payment_response = payment.complete_payment(interact_ref=str(interact_ref), received_hash=str(received_hash), pending_payment=pending_payment)
+    incoming_payment_response = payment.complete_payment(
+        interact_ref=str(interact_ref),
+        received_hash=str(received_hash),
+        pending_payment=pending_payment,
+    )

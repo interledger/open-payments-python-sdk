@@ -8,6 +8,6 @@ ENV POETRY_VIRTUALENVS_CREATE=false
 
 COPY . /app
 WORKDIR /app
-RUN poetry install --with dev
+RUN poetry install --only main,examples
 
 EXPOSE 3999

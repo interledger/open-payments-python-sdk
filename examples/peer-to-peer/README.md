@@ -18,7 +18,7 @@ Here are the steps that the example makes:
 From the repo root:
 
 ```bash
-poetry install
+poetry install --with examples
 ```
 
 ### 2. Get credentials from an Open Payments-enabled wallet
@@ -59,13 +59,13 @@ docker compose run --rm example
 To run them manually:
 ```bash
 cd examples/peer-to-peer
-poetry run callback_server.py
+poetry run python callback_server.py
 ```
 
 and with the server running in the background:
 ```bash
 cd examples/peer-to-peer
-poetry run run.py
+poetry run python run.py
 ```
 
 `docker compose run` starts the `callback-server` automatically (via `depends_on`), then launches the `run` service in an interactive terminal.

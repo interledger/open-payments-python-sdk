@@ -12,7 +12,6 @@ requires-python = ">=3.10"
 dependencies = [
     "httpx (>=0.28.1,<0.29.0)",
     "pydantic (>=2.12.5,<3.0.0)",
-    "pydantic-settings (>=2.10.6,<3.0.0)",
     "cryptography (>=50.0.2,<51.0.0)",
     "http-message-signatures (>=2.0.1,<3.0.0)",
     "http-sf (>=1.0.4,<1.1.0)",
@@ -31,7 +30,36 @@ pyflakes = "^3.2.0"
 datamodel-code-generator = "^0.28.1"
 pytest = "^8.3.4"
 pyyaml = "^6.0.2"
+
+[tool.poetry.group.live]
+optional = true
+
+[tool.poetry.group.live.dependencies]
+pydantic-settings = ">=2.10.6,<3.0.0"
+
+[tool.poetry.group.notebooks]
+optional = true
+
+[tool.poetry.group.notebooks.dependencies]
 jupyterlab = "^4.5.0"
+
+[tool.poetry.group.browser]
+optional = true
+
+[tool.poetry.group.browser.dependencies]
 selenium = "^4.38.0"
+
+[tool.poetry.group.examples]
+optional = true
+
+[tool.poetry.group.examples.dependencies]
 flask = "^3.1.3"
 python-dotenv = "^1.2.2"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+    "live: requires --run-live and a configured Open Payments provider",
+    "browser: requires --run-live --run-browser and browser tooling",
+]

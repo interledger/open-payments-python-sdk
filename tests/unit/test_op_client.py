@@ -14,7 +14,7 @@ def test_create_op_client(keyid_private_key):
     client = OpenPaymentsClient(
         keyid=keyid_private_key["keyid"],
         private_key=keyid_private_key["private_key"],
-        client_wallet_address="https://ilp.interledger-test.dev/elijahokellosalary"
+        client_wallet_address="https://wallet.example/client"
     )
     assert client.keyid == keyid
     assert client.private_key == private_key
