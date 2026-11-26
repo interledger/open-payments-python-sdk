@@ -1,0 +1,181 @@
+{
+  "provenance": "Synthetic Open Payments peer-to-peer flow. Credentials are public test sentinels; hash inputs use RFC 9635 section 4.2.3.",
+  "responses": [
+    {
+      "status": 200,
+      "json": {
+        "id": "https://sender.example/alice",
+        "assetCode": "USD",
+        "assetScale": 2,
+        "authServer": "https://server.example.com/tx",
+        "resourceServer": "https://resources.example/"
+      }
+    },
+    {
+      "status": 200,
+      "json": {
+        "id": "https://receiver.example/bob",
+        "assetCode": "USD",
+        "assetScale": 2,
+        "authServer": "https://receiver-auth.example/tx",
+        "resourceServer": "https://receiver-resources.example/"
+      }
+    },
+    {
+      "status": 200,
+      "json": {
+        "access_token": {
+          "value": "example-incoming-secret",
+          "manage": "https://server.example.com/token/manage",
+          "access": [
+            {
+              "type": "incoming-payment",
+              "actions": [
+                "create",
+                "read"
+              ]
+            }
+          ]
+        },
+        "continue": {
+          "uri": "https://server.example.com/continue/other",
+          "access_token": {
+            "value": "unused-example-incoming-secret"
+          }
+        }
+      }
+    },
+    {
+      "status": 201,
+      "json": {
+        "id": "https://receiver-resources.example/incoming-payments/1",
+        "walletAddress": "https://receiver.example/bob",
+        "completed": false,
+        "receivedAmount": {
+          "value": "0",
+          "assetCode": "USD",
+          "assetScale": 2
+        },
+        "incomingAmount": {
+          "value": "1000",
+          "assetCode": "USD",
+          "assetScale": 2
+        },
+        "createdAt": "2026-11-26T00:00:00Z",
+        "authServer": "https://receiver-auth.example/tx",
+        "methods": [
+          {
+            "type": "ilp",
+            "ilpAddress": "test.receiver",
+            "sharedSecret": "Q2FsbGJhY2tFeGFtcGxlU2VjcmV0"
+          }
+        ]
+      }
+    },
+    {
+      "status": 200,
+      "json": {
+        "access_token": {
+          "value": "example-quote-secret",
+          "manage": "https://server.example.com/token/manage",
+          "access": [
+            {
+              "type": "quote",
+              "actions": [
+                "create",
+                "read"
+              ]
+            }
+          ]
+        },
+        "continue": {
+          "uri": "https://server.example.com/continue/other",
+          "access_token": {
+            "value": "unused-example-quote-secret"
+          }
+        }
+      }
+    },
+    {
+      "status": 201,
+      "json": {
+        "id": "https://resources.example/quotes/1",
+        "walletAddress": "https://sender.example/alice",
+        "receiver": "https://receiver-resources.example/incoming-payments/1",
+        "method": "ilp",
+        "debitAmount": {
+          "value": "1000",
+          "assetCode": "USD",
+          "assetScale": 2
+        },
+        "receiveAmount": {
+          "value": "1000",
+          "assetCode": "USD",
+          "assetScale": 2
+        },
+        "createdAt": "2026-11-26T00:00:00Z",
+        "expiresAt": "2026-11-26T00:30:00Z"
+      }
+    },
+    {
+      "status": 200,
+      "json": {
+        "interact": {
+          "redirect": "https://server.example.com/interact/1",
+          "finish": "MBDOFXG4Y5CVJCX821LH"
+        },
+        "continue": {
+          "uri": "https://server.example.com/continue/opaque",
+          "access_token": {
+            "value": "example-continuation-secret"
+          }
+        }
+      }
+    },
+    {
+      "status": 200,
+      "json": {
+        "access_token": {
+          "value": "example-outgoing-secret",
+          "manage": "https://server.example.com/token/outgoing",
+          "access": [
+            {
+              "type": "outgoing-payment",
+              "actions": [
+                "create",
+                "read"
+              ],
+              "identifier": "https://sender.example/alice"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "status": 201,
+      "json": {
+        "id": "https://resources.example/outgoing-payments/1",
+        "walletAddress": "https://sender.example/alice",
+        "quoteId": "https://resources.example/quotes/1",
+        "receiver": "https://receiver-resources.example/incoming-payments/1",
+        "failed": false,
+        "debitAmount": {
+          "value": "1000",
+          "assetCode": "USD",
+          "assetScale": 2
+        },
+        "receiveAmount": {
+          "value": "1000",
+          "assetCode": "USD",
+          "assetScale": 2
+        },
+        "sentAmount": {
+          "value": "1000",
+          "assetCode": "USD",
+          "assetScale": 2
+        },
+        "createdAt": "2026-11-26T00:00:00Z"
+      }
+    }
+  ]
+}
