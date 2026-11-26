@@ -167,6 +167,40 @@ Encrypted private PEM inputs accept `password=b"your-password"` with `"pem"`, `"
 
 `key_to_jwk()` exports public material by default and adds a `kid` only when supplied. Exporting private `d` requires `include_private=True`. Private fields are hidden from ordinary `KeyPair` and `SellerOpenPaymentAccount` representations and validation-error messages; explicit attribute access and `model_dump()` still include them for application-owned persistence.
 
+## Request signatures and content digests
+
+The SDK signs prepared requests using Ed25519 and SHA-512 content digests. The helpers below can verify an already signed, fully buffered `httpx.Request` independently of the SDK's request builder. Select the public key and key ID from a trusted registry before calling the verifier.
+
+```python
+from httpx import Request
+from open_payments_sdk import load_public_key, verify_request_signature
+
+def verify_signed_request(request: Request, trusted_jwk: dict) -> bool:
+    public_key = load_public_key(trusted_jwk, format="jwk")
+    return verify_request_signature(
+        request,
+        public_key=public_key,
+        key_id=trusted_jwk["kid"],
+    )
+```
+
+Verification checks the exact prepared method/target URI, the expected key ID, signature bytes and timestamp validity. Authorization must be covered when present. Requests with content or explicit content metadata must cover their content type, byte length and SHA-512 digest; the digest and length must also match the exact body bytes. Host must match the prepared URL. The helper leaves the request unchanged and returns `False` for invalid inputs, unsupported signatures or unread/transfer-encoded streams.
+
+`max_age` defaults to five minutes and accepts a positive `datetime.timedelta`. Age and optional expiry checks use Unix timestamps with five seconds of clock tolerance. The helper supports a single signature and plain covered components. It rejects duplicate signature fields/parameters and repeated covered headers. It accepts the current SDK/Node signing profile's optional `alg="ed25519"` and untagged signatures; a supplied `tag` must be `"gnap"`. This is a verifier for that Open Payments SDK profile; the full [GNAP HTTP signature profile](https://www.rfc-editor.org/rfc/rfc9635.html#section-7.3.1) defines additional requirements. Token authorization, trusted-key discovery and durable nonce/replay tracking remain application responsibilities.
+
+Digest helpers operate on exact bytes without JSON parsing, normalization or encoding guesses:
+
+```python
+from open_payments_sdk import calculate_content_digest, verify_content_digest
+
+body = b'{"hello": "world"}'
+digest = calculate_content_digest(body)
+assert verify_content_digest(body, digest)
+assert not verify_content_digest(body + b"\n", digest)
+```
+
+`verify_content_digest()` requires a valid SHA-512 member in the structured `Content-Digest` dictionary and compares it in constant time. Other algorithm members are ignored. Digest verification alone does not authenticate the sender; signature verification binds the digest to the selected public key.
+
 ## Wallets
 
 You can use the created client to interact with the resource server. In this case we will use it to interact with a wallet address to get the wallet address details and jwks.json

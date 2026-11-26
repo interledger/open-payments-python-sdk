@@ -1,0 +1,168 @@
+{
+  "source": {
+    "node": "v26.13.0",
+    "utils": "2.0.3",
+    "framing": "1.0.8",
+    "key": "RFC 8032 section 7.1 test 1"
+  },
+  "cases": [
+    {
+      "name": "grant-initiation",
+      "source": "@interledger/http-signature-utils createHeaders",
+      "method": "POST",
+      "url": "https://auth.wallet.example.com/tenant/grants",
+      "key_id": "key-1",
+      "created": 1618884473,
+      "body_base64": "eyJhY2Nlc3NfdG9rZW4iOnsiYWNjZXNzIjpbeyJ0eXBlIjoiaW5jb21pbmctcGF5bWVudCIsImFjdGlvbnMiOlsiY3JlYXRlIl19XX19",
+      "headers": {
+        "content-digest": "sha-512=:BCJv6lddnZEmflmGD/fa38VjX6Ap6KMb1jP+LtA9CHKGCQvpDWycfsxi16CTyHQC7S10zcfQxTHYmC/gA4jVNA==:",
+        "content-length": "78",
+        "content-type": "application/json"
+      },
+      "signature_base": "\"@method\": POST\n\"@target-uri\": https://auth.wallet.example.com/tenant/grants\n\"content-digest\": sha-512=:BCJv6lddnZEmflmGD/fa38VjX6Ap6KMb1jP+LtA9CHKGCQvpDWycfsxi16CTyHQC7S10zcfQxTHYmC/gA4jVNA==:\n\"content-length\": 78\n\"content-type\": application/json\n\"@signature-params\": (\"@method\" \"@target-uri\" \"content-digest\" \"content-length\" \"content-type\");keyid=\"key-1\";created=1618884473",
+      "signature_headers": {
+        "signature": "sig1=:4Pr2Tv2nqknWsE265vq9nNJD5GcGHqBNqEFzOLsOMeKlXnz5R9RWdblsQ7C52D39f5eqz17bfZvs/Bq4VF8oAQ==:",
+        "signature-input": "sig1=(\"@method\" \"@target-uri\" \"content-digest\" \"content-length\" \"content-type\");keyid=\"key-1\";created=1618884473"
+      }
+    },
+    {
+      "name": "authenticated-get",
+      "source": "@interledger/http-signature-utils createHeaders",
+      "method": "GET",
+      "url": "https://wallet.example.com/tenant/incoming-payments/one?view=full&x=a%2Fb",
+      "key_id": "key-1",
+      "created": 1618884473,
+      "body_base64": null,
+      "headers": {
+        "authorization": "GNAP public-test-token"
+      },
+      "signature_base": "\"@method\": GET\n\"@target-uri\": https://wallet.example.com/tenant/incoming-payments/one?view=full&x=a%2Fb\n\"authorization\": GNAP public-test-token\n\"@signature-params\": (\"@method\" \"@target-uri\" \"authorization\");keyid=\"key-1\";created=1618884473",
+      "signature_headers": {
+        "signature": "sig1=:w+TTSnNXvJJHvSUuFAKvu1rHdicBTSj0zwHk97/RQYCkx/FcKNuN1QJaLmITkGsAsGOY9u50uSUgy+obhpGWCw==:",
+        "signature-input": "sig1=(\"@method\" \"@target-uri\" \"authorization\");keyid=\"key-1\";created=1618884473"
+      }
+    },
+    {
+      "name": "authenticated-delete",
+      "source": "@interledger/http-signature-utils createHeaders",
+      "method": "DELETE",
+      "url": "https://auth.wallet.example.com/tenant/continue/one",
+      "key_id": "key-1",
+      "created": 1618884473,
+      "body_base64": null,
+      "headers": {
+        "authorization": "GNAP public-test-token"
+      },
+      "signature_base": "\"@method\": DELETE\n\"@target-uri\": https://auth.wallet.example.com/tenant/continue/one\n\"authorization\": GNAP public-test-token\n\"@signature-params\": (\"@method\" \"@target-uri\" \"authorization\");keyid=\"key-1\";created=1618884473",
+      "signature_headers": {
+        "signature": "sig1=:vy4x40qJEYeJivX7YIW4Jt0Q9GeVAKN+cdnJEDNqR/sTNStpiDEcJZ1zLgxASRr4IoqYoNvH50OsfrB3Zgs1DA==:",
+        "signature-input": "sig1=(\"@method\" \"@target-uri\" \"authorization\");keyid=\"key-1\";created=1618884473"
+      }
+    },
+    {
+      "name": "unicode-body",
+      "source": "@interledger/http-signature-utils createHeaders",
+      "method": "POST",
+      "url": "https://wallet.example.com/tenant/quotes",
+      "key_id": "key-1",
+      "created": 1618884473,
+      "body_base64": "eyJtZXNzYWdlIjoiQ2Fmw6kg8J+MjSJ9",
+      "headers": {
+        "authorization": "GNAP public-test-token",
+        "content-digest": "sha-512=:L3zOIZrDXyyS5mcF17sYKyHhdUjzBpiyaktnZEmzm3TS9nkFMc9D7GiMu8LyLal9XOH+K1iXeQA4ztd9HWmPOg==:",
+        "content-length": "24",
+        "content-type": "application/json"
+      },
+      "signature_base": "\"@method\": POST\n\"@target-uri\": https://wallet.example.com/tenant/quotes\n\"authorization\": GNAP public-test-token\n\"content-digest\": sha-512=:L3zOIZrDXyyS5mcF17sYKyHhdUjzBpiyaktnZEmzm3TS9nkFMc9D7GiMu8LyLal9XOH+K1iXeQA4ztd9HWmPOg==:\n\"content-length\": 24\n\"content-type\": application/json\n\"@signature-params\": (\"@method\" \"@target-uri\" \"authorization\" \"content-digest\" \"content-length\" \"content-type\");keyid=\"key-1\";created=1618884473",
+      "signature_headers": {
+        "signature": "sig1=:d1iIVJS2B/4G5kW0MFnYhhLf9Biuj5UZPZoju5XeC+rhDkMzALCTiDkduOydpiNKazCF/36jKVejS/4jGd/iDA==:",
+        "signature-input": "sig1=(\"@method\" \"@target-uri\" \"authorization\" \"content-digest\" \"content-length\" \"content-type\");keyid=\"key-1\";created=1618884473"
+      }
+    },
+    {
+      "name": "escaped-key-id",
+      "source": "@interledger/http-signature-utils createHeaders",
+      "method": "GET",
+      "url": "https://wallet.example.com/tenant/incoming-payments/one",
+      "key_id": "key-\"one\"\\two",
+      "created": 1618884473,
+      "body_base64": null,
+      "headers": {},
+      "signature_base": "\"@method\": GET\n\"@target-uri\": https://wallet.example.com/tenant/incoming-payments/one\n\"@signature-params\": (\"@method\" \"@target-uri\");keyid=\"key-\\\"one\\\"\\\\two\";created=1618884473",
+      "signature_headers": {
+        "signature": "sig1=:48J4e/MOo9YQ//E9Dl2BOnrRV5D+7bICNh17rRyswFZ5W1V01YatDupge2UJOqfqYvgjQD2LqVCGVvPvbHIAAg==:",
+        "signature-input": "sig1=(\"@method\" \"@target-uri\");keyid=\"key-\\\"one\\\"\\\\two\";created=1618884473"
+      }
+    },
+    {
+      "name": "no-body-no-authorization",
+      "source": "@interledger/http-signature-utils createHeaders",
+      "method": "GET",
+      "url": "http://localhost:3000/tenant/incoming-payments/one",
+      "key_id": "key-1",
+      "created": 1618884473,
+      "body_base64": null,
+      "headers": {},
+      "signature_base": "\"@method\": GET\n\"@target-uri\": http://localhost:3000/tenant/incoming-payments/one\n\"@signature-params\": (\"@method\" \"@target-uri\");keyid=\"key-1\";created=1618884473",
+      "signature_headers": {
+        "signature": "sig1=:e8fZBKh3NRkMpWT3DdXpc7XvR9vLkDtgv4hUoSNqvrXp8sN80lZHfdFziCm0EvuI13FjHK15Anude1kLMHQbDg==:",
+        "signature-input": "sig1=(\"@method\" \"@target-uri\");keyid=\"key-1\";created=1618884473"
+      }
+    },
+    {
+      "name": "exact-pretty-body",
+      "source": "http-message-signatures exact-header profile",
+      "method": "POST",
+      "url": "https://wallet.example.com/tenant/quotes",
+      "key_id": "key-1",
+      "created": 1618884473,
+      "body_base64": "ewogICJoZWxsbyI6ICJ3b3JsZCIKfQo=",
+      "headers": {
+        "content-digest": "sha-512=:pK+y29CUBHS7ww3aMP8qJcf5iwdZ5h61/Vc5BevEXSQaCg+Jug/zs+4xpmhDmQ7CArOdN2xM79EIDUPqGE2WkA==:",
+        "content-length": "23",
+        "content-type": "application/json"
+      },
+      "signature_base": "\"@method\": POST\n\"@target-uri\": https://wallet.example.com/tenant/quotes\n\"content-digest\": sha-512=:pK+y29CUBHS7ww3aMP8qJcf5iwdZ5h61/Vc5BevEXSQaCg+Jug/zs+4xpmhDmQ7CArOdN2xM79EIDUPqGE2WkA==:\n\"content-length\": 23\n\"content-type\": application/json\n\"@signature-params\": (\"@method\" \"@target-uri\" \"content-digest\" \"content-length\" \"content-type\");keyid=\"key-1\";created=1618884473",
+      "signature_headers": {
+        "signature": "sig1=:0P8Nslf9EqIWu+3KBtR4BzK+YN/4Bhwr9HJDRvVe3mjIlY8IWyPYRPtVeL4FBFD5X+uK8JL1gmDkFOvXqr6hCw==:",
+        "signature-input": "sig1=(\"@method\" \"@target-uri\" \"content-digest\" \"content-length\" \"content-type\");keyid=\"key-1\";created=1618884473"
+      }
+    },
+    {
+      "name": "explicit-empty-body",
+      "source": "http-message-signatures exact-header profile",
+      "method": "POST",
+      "url": "https://wallet.example.com/tenant/quotes",
+      "key_id": "key-1",
+      "created": 1618884473,
+      "body_base64": "",
+      "headers": {
+        "content-digest": "sha-512=:z4PhNX7vuL3xVChQ1m2AB9Yg5AULVxXcg/SpIdNs6c5H0NE8XYXysP+DGNKHfuwvY7kxvUdBeoGlODJ6+SfaPg==:",
+        "content-length": "0",
+        "content-type": "application/json"
+      },
+      "signature_base": "\"@method\": POST\n\"@target-uri\": https://wallet.example.com/tenant/quotes\n\"content-digest\": sha-512=:z4PhNX7vuL3xVChQ1m2AB9Yg5AULVxXcg/SpIdNs6c5H0NE8XYXysP+DGNKHfuwvY7kxvUdBeoGlODJ6+SfaPg==:\n\"content-length\": 0\n\"content-type\": application/json\n\"@signature-params\": (\"@method\" \"@target-uri\" \"content-digest\" \"content-length\" \"content-type\");keyid=\"key-1\";created=1618884473",
+      "signature_headers": {
+        "signature": "sig1=:DAeRq0aop/L7rTMWaIzwVr3PdB0mrc5Hewd8gRRRUGOSw+B5Pb+iTPc0yvrxNh4zZpHqKSJvO+p2yj1RyX87DA==:",
+        "signature-input": "sig1=(\"@method\" \"@target-uri\" \"content-digest\" \"content-length\" \"content-type\");keyid=\"key-1\";created=1618884473"
+      }
+    },
+    {
+      "name": "mixed-case-authorization",
+      "source": "http-message-signatures exact-header profile",
+      "method": "GET",
+      "url": "https://[2001:db8::1]:8443/tenant/incoming-payments/one",
+      "key_id": "key-1",
+      "created": 1618884473,
+      "body_base64": null,
+      "headers": {
+        "authorization": "GNAP public-test-token"
+      },
+      "signature_base": "\"@method\": GET\n\"@target-uri\": https://[2001:db8::1]:8443/tenant/incoming-payments/one\n\"authorization\": GNAP public-test-token\n\"@signature-params\": (\"@method\" \"@target-uri\" \"authorization\");keyid=\"key-1\";created=1618884473",
+      "signature_headers": {
+        "signature": "sig1=:mB662tCPvChYHmmK4zCv5cfTU5uBylm/ecYSI9iq46rheJD+XdmZJ2nhohWSA+T7xA/j7gITpDAFSBgxcPpKAQ==:",
+        "signature-input": "sig1=(\"@method\" \"@target-uri\" \"authorization\");keyid=\"key-1\";created=1618884473"
+      }
+    }
+  ]
+}

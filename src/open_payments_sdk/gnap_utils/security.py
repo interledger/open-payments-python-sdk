@@ -2,14 +2,15 @@
 Shared class for making secure requests
 """
 
-import base64
-import hashlib
 from logging import Logger
 from typing import Sequence
 from http_message_signatures import HTTPMessageSigner, algorithms
 from httpx import Request
 from open_payments_sdk.gnap_utils.hash import HashManager
-from open_payments_sdk.gnap_utils.http_signatures import OPKeyResolver, PatchedHTTPSignatureComponentResolver
+from open_payments_sdk.gnap_utils.http_signatures import (
+    OPKeyResolver,
+    calculate_content_digest,
+)
 from open_payments_sdk.gnap_utils.keys import KeyManager
 
 
@@ -24,7 +25,6 @@ class SecurityBase:
         self.http_signatures = HTTPMessageSigner(
             signature_algorithm=algorithms.ED25519,
             key_resolver=OPKeyResolver(keyid=keyid, private_key=private_key),
-            component_resolver_class=PatchedHTTPSignatureComponentResolver,
         )
         self.keyid = keyid
         self.private_key = private_key
@@ -36,12 +36,17 @@ class SecurityBase:
         """
         return {"Authorization": f"GNAP {access_token}"}
 
-    def sign_request(self, message: Request, covered_component_ids: Sequence[str]) -> Request:
+    def sign_request(
+        self, message: Request, covered_component_ids: Sequence[str]
+    ) -> Request:
         """
         Prepare http signature headers
         """
         self.http_signatures.sign(
-            message=message, key_id=self.keyid, covered_component_ids=covered_component_ids, label="sig1"
+            message=message,
+            key_id=self.keyid,
+            covered_component_ids=covered_component_ids,
+            label="sig1",
         )
         return message
 
@@ -49,6 +54,5 @@ class SecurityBase:
         """
         Compute Digest
         """
-        digest = hashlib.sha512(request.content).digest()
-        request.headers["Content-Digest"] = f"sha-512=:{base64.b64encode(digest).decode('ascii')}:"
+        request.headers["Content-Digest"] = calculate_content_digest(request.content)
         return request

@@ -1,0 +1,77 @@
+{
+  "source": "Generated with Node.js v26.13.0 crypto.createHash('sha512') and Buffer byte lengths; no Node dependency is required by tests.",
+  "cases": [
+    {
+      "name": "rfc9530-appendix-d",
+      "body_base64": "eyJoZWxsbyI6ICJ3b3JsZCJ9",
+      "headers": {
+        "content-digest": "sha-512=:WZDPaVn/7XgHaAy8pmojAkGWoRx2UFChF41A2svX+TaPm+AbwAgBWnrIiYllu7BNNyealdVLvRwEmTHWXvJwew==:",
+        "content-length": "18",
+        "content-type": "application/json"
+      }
+    },
+    {
+      "name": "compact-json",
+      "body_base64": "eyJoZWxsbyI6IndvcmxkIn0=",
+      "headers": {
+        "content-digest": "sha-512=:+PtokCNHosgo04ww4cNhd4yJxhMjLzWjDAKtKwQZDT4Ef9v/PrS/+BQLX4IX5dZkUMK/tQo7Uyc68RkhNyCZVg==:",
+        "content-length": "17",
+        "content-type": "application/json"
+      }
+    },
+    {
+      "name": "pretty-json",
+      "body_base64": "ewogICJoZWxsbyI6ICJ3b3JsZCIKfQo=",
+      "headers": {
+        "content-digest": "sha-512=:pK+y29CUBHS7ww3aMP8qJcf5iwdZ5h61/Vc5BevEXSQaCg+Jug/zs+4xpmhDmQ7CArOdN2xM79EIDUPqGE2WkA==:",
+        "content-length": "23",
+        "content-type": "application/json"
+      }
+    },
+    {
+      "name": "unicode-json",
+      "body_base64": "eyJtZXNzYWdlIjoiQ2Fmw6kg8J+MjSJ9",
+      "headers": {
+        "content-digest": "sha-512=:L3zOIZrDXyyS5mcF17sYKyHhdUjzBpiyaktnZEmzm3TS9nkFMc9D7GiMu8LyLal9XOH+K1iXeQA4ztd9HWmPOg==:",
+        "content-length": "24",
+        "content-type": "application/json"
+      }
+    },
+    {
+      "name": "empty-body",
+      "body_base64": "",
+      "headers": {
+        "content-digest": "sha-512=:z4PhNX7vuL3xVChQ1m2AB9Yg5AULVxXcg/SpIdNs6c5H0NE8XYXysP+DGNKHfuwvY7kxvUdBeoGlODJ6+SfaPg==:",
+        "content-length": "0",
+        "content-type": "application/json"
+      }
+    },
+    {
+      "name": "json-null",
+      "body_base64": "bnVsbA==",
+      "headers": {
+        "content-digest": "sha-512=:BPj/JoJgSGLkBb+I3hAu13EKxFwSBZV2JeTuPl9aIkHkU2FKzEUTRbkbr8iPOIBAGcdJJERZVnTpToz0vlOBfw==:",
+        "content-length": "4",
+        "content-type": "application/json"
+      }
+    },
+    {
+      "name": "uint64-json",
+      "body_base64": "eyJ2YWx1ZSI6IjE4NDQ2NzQ0MDczNzA5NTUxNjE1IiwiYXNzZXRDb2RlIjoiVVNEIiwiYXNzZXRTY2FsZSI6Mn0=",
+      "headers": {
+        "content-digest": "sha-512=:y0h+sakKp3KwrysdQ+fAxEozLofq7z8AfrcKQjN5x3gCXKvFuOlBQWdJ3mFL9TKIgEbr3yjUs16EFcEQu96ngA==:",
+        "content-length": "65",
+        "content-type": "application/json"
+      }
+    },
+    {
+      "name": "raw-bytes",
+      "body_base64": "AP8NCoAB",
+      "headers": {
+        "content-digest": "sha-512=:nsmKHs29TG6irXsFjrFkdPAiTJi4BBfrSHpKVlR4+lEasag6YhSAWUhqsZ67Uh6wdhqrebLWuZGFeH2oBtuEVw==:",
+        "content-length": "6",
+        "content-type": "application/json"
+      }
+    }
+  ]
+}
