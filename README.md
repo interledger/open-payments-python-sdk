@@ -22,7 +22,7 @@ The SDK requires cryptography 50.x. Upstream cryptography no longer supports Int
 
 ## Local development
 
-- Python >= 3.11
+- Python >= 3.10
 
   To install python visit [Python Download](https://www.python.org/downloads/)
 
@@ -65,7 +65,14 @@ poetry run python -m pytest tests/process --run-live --run-browser -ra
 
 Tests with missing optional dependencies or configuration report skips. The incoming-payment cases still provide the contributed scaffold; complete endpoint assertions remain follow-up work. The unimplemented interactive-grant case is explicitly reported as skipped.
 
-The peer-to-peer example uses `poetry install --with examples`. Notebook tooling is available separately through `poetry install --with notebooks`.
+The peer-to-peer example uses `poetry install --with examples`. Optional notebook tooling requires Python 3.11.5 or newer so it can use patched dependencies:
+
+```bash
+poetry env use python3.12
+poetry install --with notebooks
+```
+
+On Python versions below 3.11.5, Poetry omits the notebook tooling. The SDK, offline tests, examples, and browser tests continue to support Python 3.10.
 
 ## Usage
 
