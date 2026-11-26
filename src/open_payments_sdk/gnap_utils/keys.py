@@ -22,6 +22,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 from pydantic import BaseModel
 
+from open_payments_sdk.gnap_utils.key_validation import decode_jwk_coordinate
 from open_payments_sdk.models.keys import Key, KeyJwks, KeyPair
 
 KeyFormat = Literal["pem", "file", "base64", "jwk"]
@@ -126,17 +127,7 @@ def _jwk_input(value: KeyInput, operation: str) -> dict:
 
 
 def _coordinate(data: dict, name: str) -> bytes:
-    value = data.get(name)
-    if isinstance(value, str) and len(value) == 43:
-        try:
-            raw = base64.b64decode(
-                value.encode("ascii") + b"=", altchars=b"-_", validate=True
-            )
-            if len(raw) == 32 and _base64url(raw) == value:
-                return raw
-        except (ValueError, binascii.Error):
-            pass
-    raise ValueError(f"JWK {name} must be canonical unpadded base64url for 32 bytes")
+    return decode_jwk_coordinate(data.get(name), name)
 
 
 def load_private_key(

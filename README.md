@@ -171,6 +171,10 @@ Encrypted private PEM inputs accept `password=b"your-password"` with `"pem"`, `"
 
 `key_to_jwk()` exports public material by default and adds a `kid` only when supplied. Exporting private `d` requires `include_private=True`. Private fields are hidden from ordinary `KeyPair` and `SellerOpenPaymentAccount` representations and validation-error messages; explicit attribute access and `model_dump()` still include them for application-owned persistence.
 
+Public `Key` and wallet `JsonWebKey` models require `kid`, `alg="EdDSA"`, `kty="OKP"`, `crv="Ed25519"` and a canonical unpadded Base64url `x` encoding 32 bytes. The optional `use` must be `"sig"` when provided; omission stays absent in dumps, and explicit null is invalid. Public models retain additional JSON fields and reject private `d` material. They do not resolve key URLs. `Key` keeps its string metadata, while `JsonWebKey` keeps the existing enum attributes; both serialize the same JSON values and accept each other's models.
+
+Public-model `kid` follows the specification's string contract. Key generation, loading and signing apply the SDK's additional requirement that a supplied signing key ID be nonempty printable ASCII without surrounding whitespace. Normal public-model assignments validate too; Pydantic's trusted-data construction/copy methods bypass field validation, but serialization still blocks private `d` material.
+
 ## Request signatures and content digests
 
 The SDK signs prepared requests using Ed25519 and SHA-512 content digests. The helpers below can verify an already signed, fully buffered `httpx.Request` independently of the SDK's request builder. Select the public key and key ID from a trusted registry before calling the verifier.

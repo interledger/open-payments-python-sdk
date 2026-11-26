@@ -2,7 +2,8 @@ from enum import Enum
 from typing import Optional
 from pydantic import AnyUrl, BaseModel, ConfigDict, Field
 
-from .common import AssetCode, AssetScale
+from .common import AssetCode, AssetScale, Omittable
+from .jwk import PublicJwk
 
 ###################################################################################################
 # ENUMERATED TYPES
@@ -30,20 +31,14 @@ class Crv(Enum):
 ###################################################################################################
 
 
-class JsonWebKey(BaseModel):
-    kid: str
+class JsonWebKey(PublicJwk):
     alg: Alg = Field(
         ...,
         description="The cryptographic algorithm family used with the key. The only allowed value is `EdDSA`. ",
     )
-    use: Optional[Use] = None
+    use: Omittable[Use] = None
     kty: Kty
     crv: Crv
-    x: str = Field(
-        ...,
-        description="The base64 url-encoded public key.",
-        pattern=r"^[a-zA-Z0-9-_]+$",
-    )
 
 
 class DidDocument(BaseModel):
@@ -54,6 +49,7 @@ class JsonWebKeySet(BaseModel):
     keys: list[JsonWebKey]
     model_config = ConfigDict(
         extra="forbid",
+        hide_input_in_errors=True,
     )
 
 
