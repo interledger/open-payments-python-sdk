@@ -1,43 +1,33 @@
 from datetime import datetime
 from enum import Enum
+from collections.abc import Mapping
 from typing import Any, Optional
 
 from pydantic import (
+    AliasChoices,
     AnyUrl,
     BaseModel,
     ConfigDict,
     Field,
     HttpUrl,
     field_validator,
+    model_validator,
 )
+
+from .common import Amount, Cursor, Omittable, PageInfo, PageSize
 
 ###################################################################################################
 # ENUMERATED TYPES
 ###################################################################################################
 
+
 class PaymentMethod(Enum):
     ilp = "ilp"
+
 
 ###################################################################################################
 # MODEL UTILITIES
 ###################################################################################################
-
-class PageInfo(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    startCursor: Optional[str] = Field(
-        None,
-        description="Cursor corresponding to the first element in the result array.",
-        min_length=1
-    )
-    endCursor: Optional[str] = Field(
-        None,
-        description="Cursor corresponding to the last element in the result array.",
-        min_length=1
-    )
-    hasNextPage: bool = Field(..., description="Describes whether the data set has further entries.")
-    hasPreviousPage: bool = Field(..., description="Describes whether the data set has previous entries.")
 
 
 class PaymentListQuery(BaseModel):
@@ -45,39 +35,43 @@ class PaymentListQuery(BaseModel):
         ...,
         description="URL of a wallet address hosted by a Rafiki instance.",
         title="Wallet Address",
+        validation_alias=AliasChoices("walletAddress", "wallet-address"),
+        serialization_alias="wallet-address",
     )
-    cursor: Optional[str] = Field(default=None, min_length=1)
-    first: Optional[int] = Field(default=None, ge=1, le=100)
-    last: Optional[int] = Field(default=None, ge=1, le=100)
+    cursor: Omittable[Cursor] = None
+    first: Omittable[PageSize] = None
+    last: Omittable[PageSize] = None
+
+    model_config = ConfigDict(
+        extra="forbid", validate_assignment=True, revalidate_instances="always"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def one_direction(cls, value):
+        if isinstance(value, Mapping):
+            first, last = value.get("first"), value.get("last")
+        elif isinstance(value, cls):
+            first, last = value.first, value.last
+        else:
+            return value
+        if first is not None and last is not None:
+            raise ValueError("first and last must not both be supplied")
+        return value
+
+    def to_query_params(self) -> dict[str, str | int]:
+        """Export raw query values; URL encoding belongs to the HTTP transport."""
+        validated = type(self).model_validate(self)
+        return validated.model_dump(mode="json", by_alias=True)
 
 
-class Pagination(BaseModel):
-    startCursor: str = Field(min_length=1)
-    endCursor: str = Field(min_length=1)
-    hasNextPage: Optional[bool]
-    hasPreviousPage: Optional[bool]
+class Pagination(PageInfo):
+    """Compatibility name sharing the current PageInfo contract."""
+
 
 ###################################################################################################
 # MODEL CORE DEFINITIONS
 ###################################################################################################
-
-class Amount(BaseModel):
-    value: str = Field(
-        ...,
-        description="The value is an unsigned 64-bit integer amount, represented as a string.",
-    )
-    assetCode: str = Field(
-        ...,
-        description="The assetCode is a code that indicates the underlying asset. This SHOULD be an ISO4217 currency code.",
-        title="Asset code",
-    )
-    assetScale: int = Field(
-        ...,
-        description="The scale of amounts denoted in the corresponding asset code.",
-        title="Asset scale",
-        ge=0,
-        le=255
-    )
 
 
 class IlpPaymentMethod(BaseModel):
@@ -91,15 +85,17 @@ class IlpPaymentMethod(BaseModel):
     sharedSecret: str = Field(
         ...,
         description="The base64 url-encoded shared secret to use when establishing a STREAM connection.",
-        pattern=r"^[a-zA-Z0-9-_]+$"
+        pattern=r"^[a-zA-Z0-9-_]+$",
     )
     model_config = ConfigDict(
         extra="forbid",
     )
 
+
 ###################################################################################################
 # MODEL OPEN PAYMENT PROCESS DEFINITIONS
 ###################################################################################################
+
 
 class IncomingPaymentRequest(BaseModel):
     walletAddress: AnyUrl = Field(
@@ -120,6 +116,7 @@ class IncomingPaymentRequest(BaseModel):
         description="Additional metadata associated with the incoming payment. (Optional)",
     )
 
+
 class IncomingPayment(IncomingPaymentRequest):
     id: AnyUrl = Field(..., description="The URL identifying the incoming payment.")
     completed: bool = Field(
@@ -130,8 +127,12 @@ class IncomingPayment(IncomingPaymentRequest):
         ...,
         description="The total amount that has been paid into the wallet address under this incoming payment.",
     )
-    createdAt: datetime = Field(..., description="The date and time when the incoming payment was created.")
-    updatedAt: Optional[datetime] = Field(None, description="The date and time when the incoming payment was updated.")
+    createdAt: datetime = Field(
+        ..., description="The date and time when the incoming payment was created."
+    )
+    updatedAt: Optional[datetime] = Field(
+        None, description="The date and time when the incoming payment was updated."
+    )
 
 
 class IncomingPaymentResponse(IncomingPayment):
@@ -150,6 +151,8 @@ class IncomingPaymentResponse(IncomingPayment):
 class PaginatedIncomingPayments(BaseModel):
     pagination: Pagination
     result: list[IncomingPayment]
+
+    model_config = ConfigDict(extra="allow")
 
 
 class QuoteRequest(BaseModel):
@@ -192,7 +195,9 @@ class Quote(QuoteRequest):
         None,
         description="The date and time when the calculated `debitAmount` is no longer valid.",
     )
-    createdAt: datetime = Field(..., description="The date and time when the quote was created.")
+    createdAt: datetime = Field(
+        ..., description="The date and time when the quote was created."
+    )
     model_config = ConfigDict(
         extra="forbid",
     )
@@ -204,7 +209,9 @@ class OutgoingPaymentBase(BaseModel):
         description="The URL of the wallet address from which this payment is sent.",
         title="Wallet Address",
     )
-    quoteId: AnyUrl = Field(..., description="The URL of the quote defining this payment's amounts.")
+    quoteId: AnyUrl = Field(
+        ..., description="The URL of the quote defining this payment's amounts."
+    )
     debitAmount: Optional[Amount] = Field(
         None,
         description="The total amount that should be deducted from the sender's account when this outgoing payment has been paid.",
@@ -248,8 +255,12 @@ class OutgoingPayment(OutgoingPaymentBase):
         ...,
         description="The total amount that has been sent under this outgoing payment.",
     )
-    createdAt: datetime = Field(..., description="The date and time when the outgoing payment was created.")
-    updatedAt: Optional[datetime] = Field(None, description="The date and time when the outgoing payment was updated.")
+    createdAt: datetime = Field(
+        ..., description="The date and time when the outgoing payment was created."
+    )
+    updatedAt: Optional[datetime] = Field(
+        None, description="The date and time when the outgoing payment was updated."
+    )
     model_config = ConfigDict()
 
 
@@ -267,3 +278,5 @@ class OutgoingPaymentWithSpentAmounts(OutgoingPayment):
 class PaginatedOutgoingPayments(BaseModel):
     pagination: Pagination
     result: list[OutgoingPayment]
+
+    model_config = ConfigDict(extra="allow")

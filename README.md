@@ -205,6 +205,36 @@ assert not verify_content_digest(body + b"\n", digest)
 
 `verify_content_digest()` requires a valid SHA-512 member in the structured `Content-Digest` dictionary and compares it in constant time. Other algorithm members are ignored. Digest verification alone does not authenticate the sender; signature verification binds the digest to the selected public key.
 
+## Amounts and pagination models
+
+`Amount` validates a decimal string from `"0"` through `"18446744073709551615"`, with an integer asset scale from 0 through 255. Values keep their exact string spelling, including leading zeros. Asset codes follow the string contract, with ISO4217 recommended where applicable. Additional JSON fields are retained. Amounts remain importable from `open_payments_sdk.models.resource` and are shared with grant-limit models.
+
+```python
+from open_payments_sdk.models.resource import Amount, PaymentListQuery, Pagination
+
+amount = Amount(value="1000", assetCode="USD", assetScale=2)
+query = PaymentListQuery(
+    walletAddress="https://wallet.example/alice",
+    first=25,
+    cursor=None,
+)
+assert query.to_query_params() == {
+    "wallet-address": "https://wallet.example/alice",
+    "first": 25,
+}
+empty_page = Pagination(hasNextPage=False, hasPreviousPage=False)
+assert empty_page.model_dump() == {
+    "hasNextPage": False,
+    "hasPreviousPage": False,
+}
+```
+
+`PageInfo` and the existing `Pagination` name share required boolean flags and optional nonempty cursor strings. Omitted response cursors stay absent in serialized output; explicit null cursors are invalid. Cursors retain their opaque spelling. Page metadata rejects unknown fields, while payment-list envelopes retain permitted provider extension fields.
+
+Query counts are integers from 1 through 100. At most one of `first` and `last` may be supplied, matching the Node SDK's direction types; this is an SDK rule beyond the specification's separate count constraints. Optional Python query values of `None` mean omission. `to_query_params()` exports raw values with `wallet-address`; URL encoding belongs to the transport. The public `walletAddress` attribute and JSON request-body field name remain available.
+
+Amount values and asset codes require strings; scales and counts require integers; page flags require booleans. Incompatible types and cross-type coercions are rejected. Assignments to amount fields and wallet asset fields are validated too. The Pydantic `model_construct()`/`model_copy(update=...)` escape hatches assume trusted data; query export revalidates before returning parameters.
+
 ## Wallets
 
 You can use the created client to interact with the resource server. In this case we will use it to interact with a wallet address to get the wallet address details and jwks.json
