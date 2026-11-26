@@ -257,6 +257,24 @@ Incoming-payment timestamps use offset [date-time strings](https://spec.openapis
 
 Receiver validation checks the specification's HTTP(S) incoming-payment pattern and the normalized URL path, so query/fragment text or dot segments cannot supply a missing payment path. It runs with Python optimization enabled. Existing request `HttpUrl`, response `AnyUrl` and payment-method enum attributes remain available. Normal assignments validate before replacing valid values.
 
+## Outgoing payment models
+
+`OutgoingPaymentRequest` requires a wallet address and either `quoteId`, or both `incomingPayment` and `debitAmount`. The forms are exclusive; a quote request cannot also supply a debit amount or incoming payment. Metadata is an optional JSON object. Quote and incoming-payment references follow their URI contracts without imposing resource-path patterns. Unknown fields and explicit nulls are rejected.
+
+`OutgoingPayment` requires `id`, `walletAddress`, `receiver`, `debitAmount`, `receiveAmount`, `sentAmount` and `createdAt`. A missing `quoteId` stays absent, and `failed` defaults to `False` as specified; `exclude_unset=True` also omits that default when absent in the input. Amounts retain their exact strings and timestamps use the offset-aware contract above. The plain response follows its closed schema. `OutgoingPaymentWithSpentAmounts` additionally accepts optional non-null grant-spent amounts and permitted provider JSON extensions, including the legacy typed `updatedAt` field.
+
+`OutgoingPaymentGrant` models the separate grant-spent response. Both keys are required and each may contain an amount or null. Null values remain present in default dumps:
+
+```python
+from open_payments_sdk.models.resource import OutgoingPaymentGrant
+
+spent = OutgoingPaymentGrant(spentReceiveAmount=None, spentDebitAmount=None)
+assert spent.model_dump() == {
+    "spentReceiveAmount": None,
+    "spentDebitAmount": None,
+}
+```
+
 ## Wallets
 
 You can use the created client to interact with the resource server. In this case we will use it to interact with a wallet address to get the wallet address details and jwks.json

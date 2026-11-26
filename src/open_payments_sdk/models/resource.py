@@ -1,8 +1,7 @@
-from datetime import datetime
 from enum import Enum
 from collections.abc import Mapping
 import re
-from typing import Annotated, Any, Optional, TypeAlias
+from typing import Annotated, TypeAlias
 
 from pydantic import (
     AliasChoices,
@@ -89,7 +88,7 @@ class Pagination(PageInfo):
 ###################################################################################################
 
 
-class _ResourceModel(BaseModel):
+class _JsonResourceModel(BaseModel):
     __pydantic_extra__: dict[str, JsonValue]
 
     model_config = ConfigDict(
@@ -99,6 +98,8 @@ class _ResourceModel(BaseModel):
         validate_assignment=True,
     )
 
+
+class _ResourceModel(_JsonResourceModel):
     @field_validator("*", mode="before")
     @classmethod
     def reject_explicit_null(cls, value):
@@ -355,38 +356,87 @@ class Quote(_ResourceModel):
     )
 
 
-class OutgoingPaymentBase(BaseModel):
-    walletAddress: AnyUrl = Field(
+class OutgoingPaymentBase(_ResourceModel):
+    walletAddress: _ResourceUri = Field(
         ...,
         description="The URL of the wallet address from which this payment is sent.",
         title="Wallet Address",
     )
-    quoteId: AnyUrl = Field(
-        ..., description="The URL of the quote defining this payment's amounts."
+    quoteId: Omittable[_ResourceUri] = Field(
+        None, description="The URL of the quote defining this payment's amounts."
     )
-    debitAmount: Optional[Amount] = Field(
+    debitAmount: Omittable[Amount] = Field(
         None,
         description="The total amount that should be deducted from the sender's account when this outgoing payment has been paid.",
     )
-    metadata: Optional[dict[str, Any]] = Field(
+    metadata: Omittable[_Metadata] = Field(
         None,
         description="Additional metadata associated with the outgoing payment. (Optional)",
     )
+    model_config = ConfigDict(extra="forbid")
 
 
 class OutgoingPaymentRequest(OutgoingPaymentBase):
-    incomingPayment: Optional[AnyUrl] = Field(default=None)
+    incomingPayment: Omittable[_ResourceUri] = None
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "oneOf": [
+                {
+                    "required": ["quoteId"],
+                    "not": {
+                        "anyOf": [
+                            {"required": ["incomingPayment"]},
+                            {"required": ["debitAmount"]},
+                        ]
+                    },
+                },
+                {
+                    "required": ["incomingPayment", "debitAmount"],
+                    "not": {"required": ["quoteId"]},
+                },
+            ]
+        }
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def one_creation_source(cls, value):
+        if isinstance(value, Mapping):
+            quote = value.get("quoteId") is not None
+            incoming = value.get("incomingPayment") is not None
+            debit = value.get("debitAmount") is not None
+            if quote and (incoming or debit):
+                raise ValueError(
+                    "quoteId must not be combined with incomingPayment or debitAmount"
+                )
+            if not quote and not (incoming and debit):
+                raise ValueError(
+                    "supply quoteId, or both incomingPayment and debitAmount"
+                )
+        return value
 
 
 class OutgoingPayment(OutgoingPaymentBase):
-    id: AnyUrl = Field(..., description="The URL identifying the outgoing payment.")
-    quoteId: Optional[AnyUrl]
-    failed: Optional[bool] = Field(
+    id: _ResourceUri = Field(
+        ...,
+        description="The URL identifying the outgoing payment.",
+        json_schema_extra={"readOnly": True},
+    )
+    walletAddress: _ResourceUri = Field(
+        ...,
+        description="The wallet address from which this payment is sent.",
+        json_schema_extra={"readOnly": True},
+    )
+    quoteId: Omittable[
+        Annotated[_ResourceUri, Field(json_schema_extra={"readOnly": True})]
+    ] = None
+    failed: StrictBool = Field(
         False,
         description="Describes whether the payment failed to send its full amount.",
     )
-    receiver: Optional[AnyUrl] = Field(
-        None,
+    receiver: _ReceiverUri = Field(
+        ...,
         description="The URL of the incoming payment that is being paid.",
         examples=[
             "https://ilp.interledger-test.dev/incoming-payments/08394f02-7b7b-45e2-b645-51d04e7c330c",
@@ -407,28 +457,32 @@ class OutgoingPayment(OutgoingPaymentBase):
         ...,
         description="The total amount that has been sent under this outgoing payment.",
     )
-    createdAt: datetime = Field(
+    createdAt: ProtocolDateTime = Field(
         ..., description="The date and time when the outgoing payment was created."
     )
-    updatedAt: Optional[datetime] = Field(
-        None, description="The date and time when the outgoing payment was updated."
-    )
-    model_config = ConfigDict()
 
 
 class OutgoingPaymentWithSpentAmounts(OutgoingPayment):
-    grantSpentDebitAmount: Optional[Amount] = Field(
+    grantSpentDebitAmount: Omittable[Amount] = Field(
         None,
         description="The total amount successfully deducted from the sender's account using the current outgoing payment grant.",
     )
-    grantSpentReceiveAmount: Optional[Amount] = Field(
+    grantSpentReceiveAmount: Omittable[Amount] = Field(
         None,
         description="The total amount successfully received (by all receivers) using the current outgoing payment grant.",
     )
+    updatedAt: Omittable[ProtocolDateTime] = Field(
+        None, description="Provider extension: when this outgoing payment was updated."
+    )
+
+    model_config = ConfigDict(extra="allow")
 
 
-class PaginatedOutgoingPayments(BaseModel):
+class PaginatedOutgoingPayments(_ResourceModel):
     pagination: Pagination
     result: list[OutgoingPayment]
 
-    model_config = ConfigDict(extra="allow")
+
+class OutgoingPaymentGrant(_JsonResourceModel):
+    spentReceiveAmount: Amount | None
+    spentDebitAmount: Amount | None
