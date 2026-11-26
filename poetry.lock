@@ -795,14 +795,14 @@ ssh = ["bcrypt (>=3.1.5)"]
 
 [[package]]
 name = "datamodel-code-generator"
-version = "0.64.1"
+version = "0.81.0"
 description = "Datamodel Code Generator"
 optional = false
 python-versions = ">=3.10"
 groups = ["dev"]
 files = [
-    {file = "datamodel_code_generator-0.64.1-py3-none-any.whl", hash = "sha256:5d459185b55236e60009923794eb28c890fb31994175d711d7f16ed1b8570bb1"},
-    {file = "datamodel_code_generator-0.64.1.tar.gz", hash = "sha256:37dafa41773a736caccbb92a525728ad6fc18f283eebff51022e59720f8d1b15"},
+    {file = "datamodel_code_generator-0.81.0-py3-none-any.whl", hash = "sha256:82ff0c295685065a83c530ce42ec03fc75b7ca01e72083eb8232d68f7637013a"},
+    {file = "datamodel_code_generator-0.81.0.tar.gz", hash = "sha256:3b4d1639cc7430f7e34fddc3827fb5d3eb0a4f5394750890c46ba2a9d56e3ee2"},
 ]
 
 [package.dependencies]
@@ -818,12 +818,16 @@ pydantic = [
 ]
 pyyaml = ">=6.0.1"
 tomli = {version = ">=2.2.1,<3", markers = "python_version < \"3.11\""}
+typing-extensions = ">=4.16,<5"
 
 [package.extras]
-all = ["graphql-core (>=3.2.3)", "grpcio-tools (>=1.62,<2)", "httpx (>=0.24.1)", "openapi-spec-validator (>=0.2.8,<0.8)", "prance (>=0.18.2)", "pysnooper (>=0.4.1,<2)", "ruff (>=0.9.10)", "watchfiles (>=1.1)"]
+all = ["black (>=19.10b0) ; sys_platform != \"emscripten\"", "graphql-core (>=3.2.3)", "grpcio-tools (>=1.62,<2)", "httpx (>=0.24.1)", "isort (>=4.3.21,<9) ; sys_platform != \"emscripten\"", "openapi-spec-validator (>=0.2.8,<0.8)", "prance (>=0.18.2)", "pysnooper (>=0.4.1,<2)", "ruff (>=0.9.10)", "watchfiles (>=1.1)"]
+black = ["black (>=19.10b0) ; sys_platform != \"emscripten\""]
 debug = ["pysnooper (>=0.4.1,<2)"]
 graphql = ["graphql-core (>=3.2.3)"]
 http = ["httpx (>=0.24.1)"]
+httpx2 = ["httpx2 (>=2,<3)"]
+isort = ["isort (>=4.3.21,<9) ; sys_platform != \"emscripten\""]
 protobuf = ["grpcio-tools (>=1.62,<2)"]
 ruff = ["ruff (>=0.9.10)"]
 ryaml = ["ryaml (>=0.5.1)"]
@@ -3398,4 +3402,4 @@ h11 = ">=0.9.0,<1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10"
-content-hash = "92a66fce7ad8d24be9178457079b5fbe4bf2799eb7029e3462c78c65ef60a44a"
+content-hash = "db0733432a4543a2d877ecec75e3c82ce67ca1017dc8233f90c95b82c8cd4b6d"

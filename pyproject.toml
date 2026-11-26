@@ -27,7 +27,7 @@ ipdb = "^0.13.13"
 isort = "^6.0.0"
 black = "^26.10.1"
 pyflakes = "^3.2.0"
-datamodel-code-generator = "^0.64.0"
+datamodel-code-generator = "^0.81.0"
 pytest = "^9.0.3"
 pyyaml = "^6.0.2"
 
