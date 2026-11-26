@@ -16,6 +16,10 @@ Open Payments is an open API standard that can be implemented by account servici
 
 An Open Payments server runs two sub-systems, a resource server which exposes APIs for performing functions against the underlying accounts and authorization server which exposes APIs compliant with the GNAP standard for getting grants to access the resource server APIs.
 
+## Cryptography platform support
+
+The SDK requires cryptography 50.x. Upstream cryptography no longer supports Intel macOS or 32-bit Windows; see its [platform changes](https://cryptography.io/en/50.0.2/changelog/).
+
 ## Local development
 
 - Python >= 3.11
