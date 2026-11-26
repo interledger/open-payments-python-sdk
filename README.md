@@ -177,6 +177,30 @@ Public-model `kid` follows the specification's string contract. Key generation, 
 
 Grant identities, display and finish URIs, listing wallet URIs and payment resource URIs validate complete RFC3986 syntax, including authority, path, query and fragment boundaries. String fields in identities and display metadata retain valid input spelling; native `AnyUrl` values are checked after conversion to their existing normalized spelling. Invalid escapes, unescaped brackets outside IP literals, repeated fragment delimiters and malformed authority fields are rejected. IPv6 literals and properly percent-encoded components remain supported.
 
+## HTTP transport ownership
+
+`HttpClient` reuses a single HTTPX connection pool, initialized on its first send. Use its context manager or call `close()` when requests have finished. Construction, context entry and request preparation perform no network requests.
+
+```python
+from open_payments_sdk.http import HttpClient
+from open_payments_sdk.client.client import OpenPaymentsClient
+
+with HttpClient(http_timeout=10.0) as http:
+    client = OpenPaymentsClient(
+        keyid=key_id,
+        private_key=private_key,
+        client_wallet_address="https://wallet.example/client",
+        http_client=http,
+    )
+    wallet = client.wallet.get_wallet_address("https://wallet.example/alice")
+```
+
+For an existing native HTTPX client, use `HttpClient(http_timeout=10.0, client=native_client)`. This wrapper borrows the supplied client: closing or exiting the wrapper leaves the native client open for its owner to close. A closed wrapper rejects further use with `ConfigurationError`; `is_closed` also detects a supplied client that its owner has closed. Finish concurrent requests before closing; `close()` does not cancel in-flight work.
+
+`http_timeout` accepts a finite nonnegative number of seconds, `None` to disable timeouts, or an `httpx.Timeout` with separate connect/read/write/pool values. The timeout is captured in each prepared request. A manually supplied HTTPX request retains an explicit timeout extension; otherwise the wrapper supplies its current timeout. See [HTTPX timeout options](https://www.python-httpx.org/advanced/timeouts/).
+
+SDK requests use their prepared URL, body and headers without merging native-client default headers, query parameters, cookies or authentication. Dispatch explicitly disables redirects and uses no additional authentication flow, preserving per-call GNAP credentials and signatures even when the borrowed client has different defaults. The SDK adds no retries. Injected event hooks and custom transports remain caller-configured behavior and must preserve signed request bytes and avoid replaying payments.
+
 ## SDK operation errors
 
 Synchronous wallet, grant, token and payment operations raise subclasses of `OpenPaymentsError` from `open_payments_sdk.errors`: `ConfigurationError`, `InputError`, `SigningError`, `TransportError`, `TransportTimeoutError`, `HTTPError` or `ResponseError`. Direct Pydantic model construction and standalone cryptography helpers retain their existing exceptions. A timeout is also a transport error; it does not establish whether the server completed a payment. The SDK does not retry failed calls.

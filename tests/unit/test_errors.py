@@ -176,6 +176,7 @@ def native_wallet(monkeypatch):
     """Exercise HttpClient.send itself without opening sockets."""
     original = httpx.Client
     seen = []
+    clients = []
 
     def configure(handler):
         def respond(request):
@@ -186,9 +187,13 @@ def native_wallet(monkeypatch):
             return original(transport=httpx.MockTransport(respond), **options)
 
         monkeypatch.setattr("open_payments_sdk.http.Client", factory)
-        return Wallet(HttpClient(http_timeout=1.0)), seen
+        client = HttpClient(http_timeout=1.0)
+        clients.append(client)
+        return Wallet(client), seen
 
-    return configure
+    yield configure
+    for client in clients:
+        client.close()
 
 
 @pytest.mark.parametrize(
@@ -511,8 +516,8 @@ def test_input_url_failure_is_structured_before_dispatch(op_client, http_mock):
 
 
 def test_unsupported_request_protocol_is_an_input_error():
-    with pytest.raises(InputError) as caught:
-        Wallet(HttpClient(1.0)).get_wallet_address("ftp://wallet.example/" + SECRET)
+    with HttpClient(1.0) as client, pytest.raises(InputError) as caught:
+        Wallet(client).get_wallet_address("ftp://wallet.example/" + SECRET)
     assert caught.value.operation == "wallet.get"
     assert caught.value.reason == "protocol"
     assert_safe(caught.value)

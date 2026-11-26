@@ -32,8 +32,8 @@ def test_wallet_discovery_uses_mock_transport(op_client, http_mock):
 
 
 def test_unmocked_sdk_request_is_blocked():
-    client = HttpClient(http_timeout=0.1)
-    request = client.build_request("GET", "https://must-not-resolve.invalid/")
+    with HttpClient(http_timeout=0.1) as client:
+        request = client.build_request("GET", "https://must-not-resolve.invalid/")
 
-    with pytest.raises(pytest.fail.Exception, match="Network access is disabled"):
-        client.send(request)
+        with pytest.raises(pytest.fail.Exception, match="Network access is disabled"):
+            client.send(request)

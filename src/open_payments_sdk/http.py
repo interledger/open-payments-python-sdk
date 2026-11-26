@@ -1,5 +1,7 @@
 """HTTP request construction and shared operation response handling."""
 
+from math import isfinite
+from threading import Lock
 from typing import TypeVar, overload
 
 import httpx
@@ -46,10 +48,10 @@ def _status_error(response: httpx.Response, request: httpx.Request):
     )
 
 
-def _send(client, request: httpx.Request) -> httpx.Response:
+def _send(client, request: httpx.Request, **options) -> httpx.Response:
     """Normalize native and legacy injected HTTP-client failures once."""
     try:
-        response = client.send(request=request)
+        response = client.send(request=request, **options)
     except httpx.HTTPStatusError as error:
         raise _status_error(error.response, request) from None
     except httpx.TimeoutException:
@@ -117,11 +119,89 @@ def _request_result(
         ) from None
 
 
-class HttpClient:
-    """Synchronous HTTP request builder and sender."""
+def _timeout(value: float | httpx.Timeout | None) -> httpx.Timeout:
+    if value is not None and (
+        isinstance(value, bool) or not isinstance(value, (int, float, httpx.Timeout))
+    ):
+        raise ConfigurationError(reason="timeout")
+    timeout = httpx.Timeout(value)
+    for part in timeout.as_dict().values():
+        if part is None:
+            continue
+        try:
+            valid = (
+                not isinstance(part, bool)
+                and isinstance(part, (int, float))
+                and isfinite(part)
+                and part >= 0
+            )
+        except OverflowError:
+            valid = False
+        if not valid:
+            raise ConfigurationError(reason="timeout")
+    return timeout
 
-    def __init__(self, http_timeout: float):
+
+class HttpClient:
+    """Reusable synchronous transport with owned or borrowed HTTPX connections.
+
+    Owned clients are initialized on first send. Closing this wrapper never
+    closes a supplied HTTPX client, but always prevents further wrapper use.
+    Finish in-flight calls before closing; close is not cancellation.
+    """
+
+    def __init__(
+        self,
+        http_timeout: float | httpx.Timeout | None,
+        *,
+        client: httpx.Client | None = None,
+    ):
+        _timeout(http_timeout)
+        if client is not None and not isinstance(client, httpx.Client):
+            raise ConfigurationError(reason="http_client")
         self.http_timeout = http_timeout
+        self._client = client
+        self._owns_client = client is None
+        self._closed = False
+        self._lifecycle_lock = Lock()
+
+    @property
+    def is_closed(self) -> bool:
+        with self._lifecycle_lock:
+            return self._closed or (self._client is not None and self._client.is_closed)
+
+    def _check_open(self) -> None:
+        if self.is_closed:
+            raise ConfigurationError(reason="closed")
+
+    def _get_client(self) -> httpx.Client:
+        with self._lifecycle_lock:
+            if self._closed or (self._client is not None and self._client.is_closed):
+                raise ConfigurationError(reason="closed")
+            if self._client is None:
+                try:
+                    self._client = Client(
+                        timeout=_timeout(self.http_timeout), follow_redirects=False
+                    )
+                except (httpx.InvalidURL, ValueError, TypeError):
+                    raise ConfigurationError(reason="http_client") from None
+            return self._client
+
+    def close(self) -> None:
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+            self._closed = True
+            client = self._client if self._owns_client else None
+        if client is not None:
+            client.close()
+
+    def __enter__(self) -> "HttpClient":
+        self._check_open()
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_traceback) -> None:
+        self.close()
 
     def build_request(
         self,
@@ -132,6 +212,8 @@ class HttpClient:
         json: dict = None,
         params: dict = None,
     ) -> Request:
+        self._check_open()
+        timeout = _timeout(self.http_timeout)
         try:
             return Request(
                 method=method,
@@ -140,6 +222,7 @@ class HttpClient:
                 json=json,
                 data=data,
                 params=params,
+                extensions={"timeout": timeout.as_dict()},
             )
         except (httpx.InvalidURL, ValueError, TypeError):
             raise InputError(
@@ -149,9 +232,16 @@ class HttpClient:
             ) from None
 
     def send(self, request: Request) -> Response:
+        client = self._get_client()
+        if "timeout" not in request.extensions:
+            request.extensions["timeout"] = _timeout(self.http_timeout).as_dict()
         try:
-            client = Client(timeout=self.http_timeout)
-        except (httpx.InvalidURL, ValueError, TypeError):
-            raise ConfigurationError(reason="http_client") from None
-        with client:
-            return _send(client, request)
+            # A no-op Auth also prevents HTTPX from deriving Basic credentials
+            # from URL userinfo. Preserve the exact prepared GNAP request.
+            return _send(client, request, auth=httpx.Auth(), follow_redirects=False)
+        except RuntimeError:
+            if client.is_closed:
+                raise ConfigurationError(
+                    reason="closed", method=request.method, url=request.url
+                ) from None
+            raise
