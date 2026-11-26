@@ -12,6 +12,10 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
 
+    env:
+      POETRY_VIRTUALENVS_CREATE: "true"
+      POETRY_VIRTUALENVS_IN_PROJECT: "true"
+
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -19,46 +23,42 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        id: python
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Setup Poetry on Windows
-        if: runner.os == 'Windows'
-        run: |
-          (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | py -
-          echo "$env:APPDATA\Python\Scripts" >> $env:GITHUB_PATH
-      
-      - name: Verify Poetry and create env on Windows
-        if: runner.os == 'Windows'
-        run: |
-          poetry --version
-          poetry config virtualenvs.create false
-            
+      - name: Install Poetry
+        run: python -m pip install "poetry==2.5.2"
 
-      - name: Setup Poetry on Ubuntu
-        if: runner.os != 'Windows'
-        run: |
-          curl -sSL https://install.python-poetry.org | python3 -
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          poetry config virtualenvs.create false
+      - name: Select project Python
+        run: python -m poetry env use "${{ steps.python.outputs.python-path }}"
+
+      - name: Verify project Python
+        env:
+          SDK_EXPECTED_PYTHON_VERSION: ${{ matrix.python-version }}
+        run: >-
+          python -m poetry run python -c
+          "import os, sys;
+          expected = tuple(map(int, os.environ['SDK_EXPECTED_PYTHON_VERSION'].split('.')));
+          print(sys.executable);
+          print(sys.version);
+          assert sys.version_info[:2] == expected, (expected, sys.version_info[:2]);
+          assert sys.prefix != sys.base_prefix, 'Expected an isolated project environment'"
 
       - name: Install dependencies
-        run: |
-          poetry install --no-interaction --no-root
-          poetry install --only dev  
+        run: python -m poetry install --no-interaction
 
       - name: Run Unit Tests
-        run: |
-          poetry run pytest tests/unit/
-          
+        run: python -m poetry run python -m pytest tests/unit/
+
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7.0.1
       - name: Install dependencies
         run: |
           python3 -m pip install .  # assumes dependencies declared in pyproject.toml
