@@ -1,0 +1,20 @@
+{
+  "commit": "e09424bb04bab698a79e4f76a4022322de9709f2",
+  "files": {
+    "auth-server.yaml": {
+      "path": "openapi/auth-server.yaml",
+      "sha256": "bdf9965a3a285518875c158ad1c30ab229dcf3d364a3efc7ed53f4e2aec1fe0d"
+    },
+    "resource-server.yaml": {
+      "path": "openapi/resource-server.yaml",
+      "sha256": "708d2758aff4e7037fcec2a43e270a0c33a2158471da6e4e48e777132e5b6d81"
+    },
+    "wallet-address-server.yaml": {
+      "path": "openapi/wallet-address-server.yaml",
+      "sha256": "b0fd8720f8534fefcb12588b3c8a9d18383458b064e666a999610ac382411020"
+    }
+  },
+  "release": "v1.5.1",
+  "repository": "https://github.com/interledger/open-payments-specifications",
+  "schema_version": 1
+}

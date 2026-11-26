@@ -1,12 +1,16 @@
 openapi: 3.1.0
 info:
   title: Wallet Address API
-  version: '1.4'
+  version: '1.5.1'
   license:
     name: Apache 2.0
     identifier: Apache-2.0
   description: |-
-    The Wallet Address API is a simple REST API to get basic details about a wallet address.
+    The wallet address server exposes publicly accessible information about an Open Payments wallet address, including basic account details and the cryptographic keys used to verify requests from this wallet address.
+
+    **Endpoints:**
+    - `GET /` — retrieve public details for a wallet address
+    - `GET /jwks.json` — retrieve the JSON Web Key Set (JWKS) for a wallet address
   contact:
     email: tech@interledger.org
 servers:
@@ -31,7 +35,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/wallet-address'
               examples:
-                Get wallet address for $ilp.interledger-test.dev/alice:
+                Get wallet address for https://ilp.interledger-test.dev/alice:
                   value:
                     id: 'https://ilp.interledger-test.dev/alice'
                     publicName: Alice
@@ -52,7 +56,7 @@ paths:
       description: |-
         Retrieve the public information of the Wallet Address.
 
-        This end-point should be open to anonymous requests as it allows clients to verify a Wallet Address URL and get the basic information required to construct new transactions and discover the grant request URL.
+        This endpoint should be open to anonymous requests as it allows clients to verify a Wallet Address URL and get the basic information required to construct new transactions and discover the grant request URL.
 
         The content should be slow changing and cacheable for long periods. Servers SHOULD use cache control headers.
       security: []
@@ -74,23 +78,6 @@ paths:
           description: JWKS Document Not Found
       operationId: get-wallet-address-keys
       description: Retrieve the public keys of the Wallet Address.
-      security: []
-  /did.json:
-    get:
-      summary: Get the DID Document for this wallet
-      tags:
-        - wallet-address
-      responses:
-        '200':
-          description: DID Document Found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/did-document'
-        '500':
-          description: DID Document not yet implemented
-      operationId: get-wallet-address-did-document
-      description: Retrieve the DID Document of the Wallet Address.
       security: []
 components:
   schemas:
@@ -117,9 +104,15 @@ components:
           description: A public name for the account. This should be set by the account holder with their provider to provide a hint to counterparties as to the identity of the account holder.
           readOnly: true
         assetCode:
-          $ref: ./schemas.yaml#/components/schemas/assetCode
+          title: Asset code
+          type: string
+          description: The assetCode is a code that indicates the underlying asset. An ISO4217 currency code should be used whenever possible. The ISO4217 representation of the US Dollar is USD.
         assetScale:
-          $ref: ./schemas.yaml#/components/schemas/assetScale
+          title: Asset scale
+          type: integer
+          minimum: 0
+          maximum: 255
+          description: The number of decimal places that defines the scale of the smallest divisible unit for the given asset code. It determines how an integer amount is scaled to derive the actual monetary value. For example, USD has an asset scale of 2 with the smallest unit being 0.01. An integer amount of `1000` with an `assetCode` of `USD` and `assetScale` of `2` translates to $10.00.
         authServer:
           type: string
           format: uri
@@ -162,6 +155,7 @@ components:
       properties:
         kid:
           type: string
+          description: A unique identifier for the key.
         alg:
           type: string
           description: 'The cryptographic algorithm family used with the key. The only allowed value is `EdDSA`. '
@@ -169,14 +163,17 @@ components:
             - EdDSA
         use:
           type: string
+          description: The intended use of the key. The only allowed value is `sig` (signature).
           enum:
             - sig
         kty:
           type: string
+          description: The key type. Identifies the cryptographic algorithm family. The only allowed value is `OKP` (Octet Key Pair).
           enum:
             - OKP
         crv:
           type: string
+          description: The cryptographic curve used with the key. The only allowed value is `Ed25519`.
           enum:
             - Ed25519
         x:
@@ -202,8 +199,3 @@ components:
           kty: OKP
           crv: Ed25519
           x: oy0L_vTygNE4IogRyn_F5GmHXdqYVjIXkWs2jky7zsI
-    did-document:
-      type: object
-      additionalProperties: true
-      title: DID Document
-      description: A DID Document using JSON encoding

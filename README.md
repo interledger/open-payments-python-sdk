@@ -40,6 +40,10 @@ The SDK requires cryptography 50.x. Upstream cryptography no longer supports Int
 > poetry install
 ```
 
+## Specifications
+
+The development contract baseline is pinned to Open Payments v1.5.1 with release, commit and SHA-256 provenance. Run `poetry run python scripts/sync_specs.py --check` to verify the local files without network access. See [specification synchronization](spec/README.md) for explicit restore/update commands.
+
 ## Running tests
 
 The default suite is offline and blocks real network requests. It uses deterministic test keys and mock HTTP responses, without reading live credentials or requiring a browser:

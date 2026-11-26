@@ -1,0 +1,6 @@
+# Preserve the exact upstream bytes used by the specification checksums.
+spec/auth-server.yaml -text
+spec/resource-server.yaml -text
+spec/wallet-address-server.yaml -text
+spec/manifest.json text eol=lf
+scripts/fetch_spec.sh text eol=lf
