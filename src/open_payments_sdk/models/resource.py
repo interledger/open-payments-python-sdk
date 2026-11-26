@@ -1,6 +1,7 @@
 from datetime import datetime
 from enum import Enum
 from collections.abc import Mapping
+import re
 from typing import Annotated, Any, Optional, TypeAlias
 
 from pydantic import (
@@ -111,6 +112,34 @@ _ResourceUri: TypeAlias = Annotated[
     AnyUrl, BeforeValidator(_URI_STRING_ADAPTER.validate_python)
 ]
 _Metadata: TypeAlias = dict[StrictStr, JsonValue]
+_RECEIVER_PATTERN = r"^(https|http)://(.+)/incoming-payments/(.+)$"
+
+
+def _receiver_uri(value):
+    value = _URI_STRING_ADAPTER.validate_python(value)
+    if not re.search(_RECEIVER_PATTERN, value):
+        raise ValueError("receiver must be an HTTP(S) incoming-payment URI")
+    return value
+
+
+def _receiver_path(value):
+    if not re.search(r"/incoming-payments/.+", value.path or ""):
+        raise ValueError("receiver path must identify an incoming payment")
+    return value
+
+
+_ReceiverUri: TypeAlias = Annotated[
+    AnyUrl,
+    BeforeValidator(_receiver_uri),
+    AfterValidator(_receiver_path),
+    Field(json_schema_extra={"pattern": _RECEIVER_PATTERN}),
+]
+_QuoteRequestReceiver: TypeAlias = Annotated[
+    HttpUrl,
+    BeforeValidator(_receiver_uri),
+    AfterValidator(_receiver_path),
+    Field(json_schema_extra={"pattern": _RECEIVER_PATTERN}),
+]
 
 
 class IlpPaymentMethod(_ResourceModel):
@@ -237,34 +266,66 @@ class PaginatedIncomingPayments(_ResourceModel):
     result: list[IncomingPayment]
 
 
-class QuoteRequest(BaseModel):
-    walletAddress: AnyUrl = Field(
+class QuoteRequest(_ResourceModel):
+    walletAddress: _ResourceUri = Field(
         ...,
         description="URL of a wallet address hosted by a Rafiki instance.",
         title="Wallet Address",
     )
-    receiver: HttpUrl
+    receiver: _QuoteRequestReceiver
     method: PaymentMethod
-    receiveAmount: Optional[Amount] = Field(
+    receiveAmount: Omittable[Amount] = Field(
         None,
         description="The total amount that should be received by the receiver when the corresponding outgoing payment has been paid.",
     )
-    debitAmount: Optional[Amount] = Field(
+    debitAmount: Omittable[Amount] = Field(
         None,
         description="The total amount that should be deducted from the sender's account when the corresponding outgoing payment has been paid. ",
     )
 
-    @field_validator("receiver")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "oneOf": [
+                {
+                    "not": {
+                        "anyOf": [
+                            {"required": ["receiveAmount"]},
+                            {"required": ["debitAmount"]},
+                        ]
+                    }
+                },
+                {"required": ["receiveAmount"]},
+                {"required": ["debitAmount"]},
+            ]
+        },
+    )
+
+    @model_validator(mode="before")
     @classmethod
-    def check_path(cls, v):
-        assert "/incoming-payments/" in v.path
-        return v
+    def one_amount_direction(cls, value):
+        if (
+            isinstance(value, Mapping)
+            and value.get("receiveAmount") is not None
+            and value.get("debitAmount") is not None
+        ):
+            raise ValueError("receiveAmount and debitAmount must not both be supplied")
+        return value
 
 
-class Quote(QuoteRequest):
-    id: AnyUrl = Field(..., description="The URL identifying the quote.")
-    receiver: Optional[AnyUrl] = Field(
-        None,
+class Quote(_ResourceModel):
+    id: _ResourceUri = Field(
+        ...,
+        description="The URL identifying the quote.",
+        json_schema_extra={"readOnly": True},
+    )
+    walletAddress: _ResourceUri = Field(
+        ...,
+        description="The wallet address from which the quote's payment would be sent.",
+        json_schema_extra={"readOnly": True},
+    )
+    receiver: _ReceiverUri = Field(
+        ...,
         description="The URL of the incoming payment that is being paid.",
         examples=[
             "https://ilp.interledger-test.dev/incoming-payments/08394f02-7b7b-45e2-b645-51d04e7c330c",
@@ -273,11 +334,20 @@ class Quote(QuoteRequest):
         ],
         title="Receiver",
     )
-    expiresAt: Optional[str] = Field(
+    method: PaymentMethod
+    receiveAmount: Amount = Field(
+        ..., description="The total amount that should be received by the receiver."
+    )
+    debitAmount: Amount = Field(
+        ..., description="The total amount that should be deducted from the sender."
+    )
+    expiresAt: Omittable[
+        Annotated[StrictStr, Field(json_schema_extra={"readOnly": True})]
+    ] = Field(
         None,
         description="The date and time when the calculated `debitAmount` is no longer valid.",
     )
-    createdAt: datetime = Field(
+    createdAt: ProtocolDateTime = Field(
         ..., description="The date and time when the quote was created."
     )
     model_config = ConfigDict(

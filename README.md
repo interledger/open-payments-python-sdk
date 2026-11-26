@@ -249,6 +249,14 @@ Methods retain the existing `PaymentMethod.ilp` enum, validate the ILP address a
 
 Incoming-payment timestamps use offset [date-time strings](https://spec.openapis.org/registry/format/date-time) or timezone-aware Python `datetime` values. Numeric timestamps, dates without a time and timestamps without an offset are rejected. Serialization uses Python datetime precision and normalization; leap seconds cannot be represented. URI attributes retain the existing `AnyUrl` behavior. Optional known fields are omitted when absent and reject explicit nulls.
 
+## Quote models
+
+`QuoteRequest` requires a wallet address, an incoming-payment receiver and `PaymentMethod.ilp`. Supply `receiveAmount`, `debitAmount`, or neither when the server can infer the amount from the incoming payment. Supplying both amounts is invalid. Unknown request fields and explicit nulls are rejected; omitted amount fields stay absent in dumps.
+
+`Quote` is a separate response model requiring `id`, `walletAddress`, `receiver`, `method`, both amounts and `createdAt`. Cross-currency amounts are preserved independently. It rejects unknown fields, including `sentAmount`. `expiresAt` remains an optional strict string as declared by the pinned schema, with no additional date-time format constraint. `createdAt` uses the offset-aware timestamp contract above.
+
+Receiver validation checks the specification's HTTP(S) incoming-payment pattern and the normalized URL path, so query/fragment text or dot segments cannot supply a missing payment path. It runs with Python optimization enabled. Existing request `HttpUrl`, response `AnyUrl` and payment-method enum attributes remain available. Normal assignments validate before replacing valid values.
+
 ## Wallets
 
 You can use the created client to interact with the resource server. In this case we will use it to interact with a wallet address to get the wallet address details and jwks.json
