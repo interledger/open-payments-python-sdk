@@ -1,6 +1,7 @@
-from hashlib import sha256
 from base64 import b64encode, b64decode
 from pydantic import AnyUrl
+
+from open_payments_sdk.gnap_utils.hash import HashEncoding, verify_interaction_hash
 
 
 class PaymentsParser:
@@ -47,24 +48,31 @@ class PaymentsParser:
         return f"-----BEGIN {format}-----\n{private_key}\n-----END {format}-----\n"
 
     def verify_response_hash(
-        self, *, incoming_payment_id: str, finish_id: str, interact_ref: str, auth_server_url: str, received_hash: str
+        self,
+        *,
+        incoming_payment_id: str,
+        finish_id: str,
+        interact_ref: str,
+        auth_server_url: str,
+        received_hash: str,
+        encoding: HashEncoding = "base64",
     ) -> bool:
         """
-        After a resource owner allows a client to access their account, the client must verify that the resource owner provided their consent.
-        The client verifies consent by calculating the hash issued by the authorization server.
+        Verify a callback hash through the legacy workflow argument names.
 
-        https://openpayments.dev/identity/hash-verification/
-
-        NOTE:
-          - `incoming_payment_id` is the key sent in the `get_purchase_endpoint` step.
-          - `finish_id` is received as part of the redirect response; `response.interact.finish`.
-          - `interact_ref` is received after the buyer approves payment, and is sent to the endpoint allocated for the transaction.
-          - `auth_server_url` is the buyer's authentication server.
-          - `received` is the hash received, and is used for comparison.
+        ``incoming_payment_id`` must contain the original client nonce, and
+        ``finish_id`` the server's ``interact.finish`` nonce. ``auth_server_url``
+        must be the exact grant initiation endpoint, not its base or continuation
+        URI. Padded Base64 remains the default; malformed inputs return False.
         """
-        data = f"{incoming_payment_id}\n{finish_id}\n{interact_ref}\n{auth_server_url}".encode("utf-8")
-        calculated = b64encode(sha256(data).digest())
-        return calculated.decode() == received_hash
+        return verify_interaction_hash(
+            client_nonce=incoming_payment_id,
+            server_nonce=finish_id,
+            interact_ref=interact_ref,
+            grant_endpoint=auth_server_url,
+            received_hash=received_hash,
+            encoding=encoding,
+        )
 
 
 paymentsparser = PaymentsParser()

@@ -1,0 +1,101 @@
+{
+  "provenance": {
+    "source": "https://www.rfc-editor.org/rfc/rfc9635.html#section-4.2.3",
+    "generator": "LibreSSL 3.3.6 CLI: dgst -sha256 -binary; Python stdlib Base64 encodings",
+    "notes": "First unpadded base64url result matches the published RFC vector. Other digests were generated outside the SDK; tests use fixed data and do not require OpenSSL."
+  },
+  "vectors": [
+    {
+      "name": "rfc9635",
+      "inputs": {
+        "client_nonce": "VJLO6A4CATR0KRO",
+        "server_nonce": "MBDOFXG4Y5CVJCX821LH",
+        "interact_ref": "4IFWWIKYB2PQ6U56NL1",
+        "grant_endpoint": "https://server.example.com/tx"
+      },
+      "hashes": {
+        "base64": "x+gguKWTj8rQf7d7i3w3UhzvuJ5bpOlKyAlVpLxBffY=",
+        "base64url": "x-gguKWTj8rQf7d7i3w3UhzvuJ5bpOlKyAlVpLxBffY"
+      }
+    },
+    {
+      "name": "trailing-slash",
+      "inputs": {
+        "client_nonce": "VJLO6A4CATR0KRO",
+        "server_nonce": "MBDOFXG4Y5CVJCX821LH",
+        "interact_ref": "4IFWWIKYB2PQ6U56NL1",
+        "grant_endpoint": "https://server.example.com/tx/"
+      },
+      "hashes": {
+        "base64": "fRiB2386XGibHeyH5oKb5FxpZcsgfSL4obQVzB0aHCo=",
+        "base64url": "fRiB2386XGibHeyH5oKb5FxpZcsgfSL4obQVzB0aHCo"
+      }
+    },
+    {
+      "name": "preserved-uri",
+      "inputs": {
+        "client_nonce": "client nonce 123",
+        "server_nonce": "server nonce 456",
+        "interact_ref": "opaque reference/value",
+        "grant_endpoint": "https://Auth.Example.COM:8443/tenant/opaque%2fpath?part=a%2Bb&part=2"
+      },
+      "hashes": {
+        "base64": "Zhu66yzaLmhsAgCN6fFKhbBPkY9HjPoGX6+0WbhhetM=",
+        "base64url": "Zhu66yzaLmhsAgCN6fFKhbBPkY9HjPoGX6-0WbhhetM"
+      }
+    },
+    {
+      "name": "root-without-slash",
+      "inputs": {
+        "client_nonce": "VJLO6A4CATR0KRO",
+        "server_nonce": "MBDOFXG4Y5CVJCX821LH",
+        "interact_ref": "4IFWWIKYB2PQ6U56NL1",
+        "grant_endpoint": "https://server.example.com"
+      },
+      "hashes": {
+        "base64": "AXVIds6m9DwECkxZau67ElK4fEd0jJ3P7aK48ZTuFrw=",
+        "base64url": "AXVIds6m9DwECkxZau67ElK4fEd0jJ3P7aK48ZTuFrw"
+      }
+    },
+    {
+      "name": "root-with-slash",
+      "inputs": {
+        "client_nonce": "VJLO6A4CATR0KRO",
+        "server_nonce": "MBDOFXG4Y5CVJCX821LH",
+        "interact_ref": "4IFWWIKYB2PQ6U56NL1",
+        "grant_endpoint": "https://server.example.com/"
+      },
+      "hashes": {
+        "base64": "BeM0viCHMMRmzhCqpJvgiNhEixFSxJby1huREFeWXus=",
+        "base64url": "BeM0viCHMMRmzhCqpJvgiNhEixFSxJby1huREFeWXus"
+      }
+    },
+    {
+      "name": "ipv6-localhost",
+      "inputs": {
+        "client_nonce": "VJLO6A4CATR0KRO",
+        "server_nonce": "MBDOFXG4Y5CVJCX821LH",
+        "interact_ref": "4IFWWIKYB2PQ6U56NL1",
+        "grant_endpoint": "http://[::1]:3006/tenant"
+      },
+      "hashes": {
+        "base64": "SDe4Hk14Tp0XN0TIdvyJdH8fEuFcb/bbdamtUleNpzM=",
+        "base64url": "SDe4Hk14Tp0XN0TIdvyJdH8fEuFcb_bbdamtUleNpzM"
+      }
+    }
+  ],
+  "incorrect_bases": {
+    "trailing-lf": {
+      "base64": "vq3BFoz/hVW2Tkq64rnC5xhFTiSmbdmpKL4D9mx+r0c=",
+      "base64url": "vq3BFoz_hVW2Tkq64rnC5xhFTiSmbdmpKL4D9mx-r0c"
+    },
+    "crlf": {
+      "base64": "UA01jWf8ZJRg8MSunJC8n4l/FgbPxjIyR0i/u1ryb5c=",
+      "base64url": "UA01jWf8ZJRg8MSunJC8n4l_FgbPxjIyR0i_u1ryb5c"
+    },
+    "swapped-nonces": {
+      "base64": "FYGUK84PiIOLyFotZGqvYZfzB2T3RxYNtUUJmKPn6qQ=",
+      "base64url": "FYGUK84PiIOLyFotZGqvYZfzB2T3RxYNtUUJmKPn6qQ"
+    }
+  }
+}
