@@ -177,6 +177,25 @@ Public-model `kid` follows the specification's string contract. Key generation, 
 
 Grant identities, display and finish URIs, listing wallet URIs and payment resource URIs validate complete RFC3986 syntax, including authority, path, query and fragment boundaries. String fields in identities and display metadata retain valid input spelling; native `AnyUrl` values are checked after conversion to their existing normalized spelling. Invalid escapes, unescaped brackets outside IP literals, repeated fragment delimiters and malformed authority fields are rejected. IPv6 literals and properly percent-encoded components remain supported.
 
+## SDK operation errors
+
+Synchronous wallet, grant, token and payment operations raise subclasses of `OpenPaymentsError` from `open_payments_sdk.errors`: `ConfigurationError`, `InputError`, `SigningError`, `TransportError`, `TransportTimeoutError`, `HTTPError` or `ResponseError`. Direct Pydantic model construction and standalone cryptography helpers retain their existing exceptions. A timeout is also a transport error; it does not establish whether the server completed a payment. The SDK does not retry failed calls.
+
+```python
+from open_payments_sdk.errors import HTTPError, OpenPaymentsError
+
+try:
+    wallet = client.wallet.get_wallet_address("https://wallet.example/alice")
+except HTTPError as error:
+    print(error.operation, error.status)  # Fixed operation name and HTTP status.
+except OpenPaymentsError as error:
+    print(error.kind, error.operation)
+```
+
+Errors expose `operation`, `method`, `url`, `status`, `reason` and `validation_errors`. The URL contains only the origin: user information, path, query and fragment are removed because returned management paths can contain secrets. Validation issues contain schema field/index locations and error types; arbitrary map keys are replaced with `<field>` and rejected values and validator messages are omitted. `ResponseError.reason` distinguishes `unexpected_status`, `json`, `encoding` and `validation` failures. Operations require the pinned success status (`201` for payment/quote creation, `200` for reads and grant/token responses, `204` for cancellations); empty cancellation acknowledgements are not decoded as JSON.
+
+HTTP errors retain nested Open Payments server `code`, `description` and object `details` for explicit access. GNAP's alternative string `error` form supplies the code alone, as defined in [RFC 9635 section 3.6](https://www.rfc-editor.org/rfc/rfc9635.html#section-3.6). These fields are untrusted and can contain sensitive values, so they are absent from `str(error)`, `repr(error)` and exception arguments. Original failures remain in suppressed `error.__context__`; normal tracebacks omit them. Explicitly inspecting context, server fields or traceback locals can expose request/response data. The SDK does not automatically log errors or response bodies.
+
 ## Request signatures and content digests
 
 The SDK signs prepared requests using Ed25519 and SHA-512 content digests. The helpers below can verify an already signed, fully buffered `httpx.Request` independently of the SDK's request builder. Select the public key and key ID from a trusted registry before calling the verifier.

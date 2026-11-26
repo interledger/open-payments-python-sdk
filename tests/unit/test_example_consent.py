@@ -16,6 +16,8 @@ import httpx
 import pytest
 from pydantic import AnyUrl
 
+from open_payments_sdk.errors import HTTPError
+
 ROOT = Path(__file__).parents[2]
 FLOW = json.loads((ROOT / "tests/fixtures/peer_to_peer.json").read_text())["responses"]
 CLIENT_NONCE = "VJLO6A4CATR0KRO"
@@ -189,7 +191,7 @@ def test_example_verifies_the_original_endpoint_after_browser_interaction(exampl
 def test_example_does_not_create_outgoing_after_continuation_failure(example):
     example.prepare(8, {7: {"status": 500, "json": {"error": "uncertain"}}})
 
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(HTTPError):
         example.module.main()
 
     assert len(example.http.requests) == 8
@@ -262,7 +264,7 @@ def test_cli_reports_failure_without_printing_response_credentials(example, capl
     caplog.set_level(logging.INFO)
 
     assert example.module.run_cli() == 1
-    assert "ValidationError" in caplog.text
+    assert "ResponseError" in caplog.text
     assert "example-incoming-secret" not in caplog.text
     assert len(example.http.requests) == 3
 

@@ -5,7 +5,9 @@ Shared class for making secure requests
 from logging import Logger
 from typing import Sequence
 from http_message_signatures import HTTPMessageSigner, algorithms
-from httpx import Request
+from http_message_signatures.exceptions import HTTPMessageSignaturesException
+from httpx import Request, RequestNotRead
+from open_payments_sdk.errors import ConfigurationError, SigningError
 from open_payments_sdk.gnap_utils.hash import HashManager
 from open_payments_sdk.gnap_utils.http_signatures import (
     OPKeyResolver,
@@ -22,10 +24,15 @@ class SecurityBase:
     def __init__(self, keyid: str, private_key: str, logger: Logger):
         self.key_manager = KeyManager()
         self.hash_manager = HashManager()
-        self.http_signatures = HTTPMessageSigner(
-            signature_algorithm=algorithms.ED25519,
-            key_resolver=OPKeyResolver(keyid=keyid, private_key=private_key),
-        )
+        try:
+            self.http_signatures = HTTPMessageSigner(
+                signature_algorithm=algorithms.ED25519,
+                key_resolver=OPKeyResolver(keyid=keyid, private_key=private_key),
+            )
+        except (ValueError, TypeError):
+            raise ConfigurationError(
+                operation="client.initialize", reason="signing_key"
+            ) from None
         self.keyid = keyid
         self.private_key = private_key
         self.logger = logger
@@ -42,17 +49,27 @@ class SecurityBase:
         """
         Prepare http signature headers
         """
-        self.http_signatures.sign(
-            message=message,
-            key_id=self.keyid,
-            covered_component_ids=covered_component_ids,
-            label="sig1",
-        )
+        try:
+            self.http_signatures.sign(
+                message=message,
+                key_id=self.keyid,
+                covered_component_ids=covered_component_ids,
+                label="sig1",
+            )
+        except (HTTPMessageSignaturesException, ValueError, TypeError, KeyError):
+            raise SigningError(method=message.method, url=message.url) from None
         return message
 
     def set_content_digest(self, request: Request) -> Request:
         """
         Compute Digest
         """
-        request.headers["Content-Digest"] = calculate_content_digest(request.content)
+        try:
+            request.headers["Content-Digest"] = calculate_content_digest(
+                request.content
+            )
+        except (ValueError, TypeError, RequestNotRead):
+            raise SigningError(
+                method=request.method, url=request.url, reason="digest"
+            ) from None
         return request

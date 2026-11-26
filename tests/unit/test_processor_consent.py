@@ -10,6 +10,7 @@ import httpx
 import pytest
 from pydantic import AnyUrl
 
+from open_payments_sdk.errors import HTTPError
 from open_payments_sdk.models.resource import Amount
 from open_payments_sdk.process.crud import OpenPaymentsProcessor
 from open_payments_sdk.process.models.process import (
@@ -374,7 +375,7 @@ def test_uncertain_http_failure_cannot_replay_the_completion(purchase, failure_s
         purchase.http.responses.append(continuation_response())
     purchase.http.responses.append(httpx.Response(500, json={"error": "uncertain"}))
 
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(HTTPError):
         complete(purchase)
     requests_after_failure = len(purchase.http.requests)
     assert purchase.pending.completion_started
