@@ -34,12 +34,22 @@ There are several "externalities" necessary to use these functions:
 3. You must store the initial outgoing payment grant response to recover the purchase request. The merchant response will return a reference ID you provided, and which you can use to recover the specified transaction.
 4. You need a web-based client which can receive the purchaser's merchant / wallet response and dispatch that response for further processing. The purchaser's merchant response will be directed to a specified URL endpoint.
 
-**NOTE**: there is nothing stopping you simply executing the grant continuation and outgoing payments on receipt of the merchant response, but you should also execute the following:
+Before continuing a grant or creating an outgoing payment, validate the callback against its stored interaction context:
 
-1. Validate the `hash` received from the merchant which is derived from the nonce / key, a finish ID, interactive reference, and authentication server URL, all of which are stored in the outgoing payment grant.
+1. Validate the received `hash` using the original client nonce, server finish nonce, interaction reference and exact grant initiation endpoint.
 2. After payment, validate that the amount - with any transaction fees factored in - has been transferred to the recipient.
 
 Only then should you consider the transaction successfully completed.
+
+### Stored consent and completion attempts
+
+`get_purchase_endpoint` generates a fresh unpredictable `client_nonce` and records the exact `grant_endpoint` used for initiation. These values, the server's `finish_id`, continuation credentials and payment/quote references are part of `pending_payment`. Persist that model before handing the redirect to the buyer. Its serialized data contains credentials and must be kept in your protected transaction store.
+
+`complete_payment` verifies the callback against that stored context and checks that its buyer and seller match the processor. Missing, malformed or mismatched callbacks and incomplete records are rejected before continuation or outgoing creation. Old records without the original nonce and endpoint cannot be resumed by guessing them from the transaction ID or current wallet metadata.
+
+Each transaction allows one initiation and one completion attempt. The processor sets `completion_started` before sending the continuation and keeps it set on success or failure, including an uncertain HTTP outcome. Persist the mutated state even when completion raises; reconcile uncertain outcomes with the provider before considering another payment attempt.
+
+The in-process guard synchronizes calls sharing the same pending model. Your application must atomically claim the persisted record before completion to coordinate separate workers, reloaded records or copied models, and retain that durable claim across crashes. The SDK does not provide a database transaction or replay store.
 
 ## Architecture decisions
 

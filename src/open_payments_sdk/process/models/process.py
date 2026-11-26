@@ -29,16 +29,35 @@ class PendingIncomingPaymentTransaction(BaseModel):
         None, description="URL reference to quote generated during initial grant to buyer."
     )
     quoted_amount: Optional[Amount] = Field(None, description="Amount quoted, including currency code.")
-    interactive_redirect: Optional[AnyUrl] = Field(None, description="URL redirect endpoint to send to the buyer.")
+    client_nonce: Optional[str] = Field(
+        None,
+        repr=False,
+        description="Original random client nonce sent in the interaction finish request.",
+    )
+    grant_endpoint: Optional[str] = Field(
+        None,
+        description="Exact grant initiation endpoint used with the stored client nonce.",
+    )
+    interactive_redirect: Optional[AnyUrl] = Field(
+        None, description="URL redirect endpoint to send to the buyer."
+    )
     finish_id: Optional[str] = Field(
-        None, description="Random string response from interactive endpoint request, `response.interact.finish`."
+        None,
+        repr=False,
+        description="Random string response from interactive endpoint request, `response.interact.finish`.",
     )
     continue_id: Optional[str] = Field(
         None,
+        repr=False,
         description="Random string response from interactive endpoint request, `response.continue.access_token.value`.",
     )
     continue_url: Optional[AnyUrl] = Field(
-        None, description="URL to request a new access key to complete the incoming payment, `response.continue.uri`."
+        None,
+        description="URL to request a new access key to complete the incoming payment, `response.continue.uri`.",
+    )
+    completion_started: bool = Field(
+        False,
+        description="A completion attempt was claimed; persist this even if its outcome is uncertain.",
     )
 
     @field_validator("buyer", "seller", mode="before")

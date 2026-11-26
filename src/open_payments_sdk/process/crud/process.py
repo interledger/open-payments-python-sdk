@@ -1,3 +1,6 @@
+import secrets
+from threading import Lock
+
 from ulid import ULID
 from pydantic import AnyUrl, HttpUrl
 
@@ -13,6 +16,8 @@ from ...models.resource import (
 )
 from ...utils.parser import paymentsparser
 from ..models.process import SellerOpenPaymentAccount, PendingIncomingPaymentTransaction
+
+_transaction_lock = Lock()
 
 
 class OpenPaymentsProcessor:
@@ -145,13 +150,25 @@ class OpenPaymentsProcessor:
         Implements the first half of the purchase process, requesting 'incoming-payment' and 'quote' grants,
         then requesting - and returning - an interactive payment grant for the buyer.
         """
+        with _transaction_lock:
+            if (
+                self.pending_payment.client_nonce is not None
+                or self.pending_payment.completion_started
+            ):
+                raise ValueError(
+                    "Purchase initiation already started for this transaction"
+                )
+            self.pending_payment.client_nonce = secrets.token_urlsafe(32)
+            self.pending_payment.grant_endpoint = str(self.buyer_wallet.authServer)
         if isinstance(amount, int):
             amount = str(amount)
         # 1. Request incoming payment grant for the seller
         incoming_payment_response = self.request_incoming_payment(amount=amount)
         self.pending_payment.incoming_payment_id = incoming_payment_response.id
         # 2. Request quote grant for the buyer
-        quote_response = self.request_quote(incoming_payment_id=incoming_payment_response.id)
+        quote_response = self.request_quote(
+            incoming_payment_id=incoming_payment_response.id
+        )
         self.pending_payment.quote_id = quote_response.id
         # 3. Request an interactive payment endpoint for the buyer
         # Request a grant
@@ -162,7 +179,13 @@ class OpenPaymentsProcessor:
                         {
                             "identifier": str(self.buyer_wallet.id),
                             "type": "outgoing-payment",
-                            "actions": ["create", "read", "read-all", "list", "list-all"],
+                            "actions": [
+                                "create",
+                                "read",
+                                "read-all",
+                                "list",
+                                "list-all",
+                            ],
                             "limits": {
                                 "debitAmount": {
                                     "assetCode": quote_response.debitAmount.assetCode,
@@ -179,7 +202,7 @@ class OpenPaymentsProcessor:
                     "finish": {
                         "method": "redirect",
                         "uri": self.redirect_uri,
-                        "nonce": str(self.pending_payment.id),
+                        "nonce": self.pending_payment.client_nonce,
                     },
                 },
             },
@@ -187,9 +210,12 @@ class OpenPaymentsProcessor:
         # Request the interactive endpoint
         # TODO: db save of the quote and interactive responses to retrieve later to complete the purchase
         interactive_response = self.client.grants.post_grant_request(
-            grant_request=grant_request, auth_server_endpoint=str(self.buyer_wallet.authServer)
+            grant_request=grant_request,
+            auth_server_endpoint=self.pending_payment.grant_endpoint,
         )
-        self.pending_payment.interactive_redirect = interactive_response.interact.redirect
+        self.pending_payment.interactive_redirect = (
+            interactive_response.interact.redirect
+        )
         self.pending_payment.finish_id = interactive_response.interact.finish
         self.pending_payment.continue_id = interactive_response.cont.access_token.value
         self.pending_payment.continue_url = interactive_response.cont.uri
@@ -200,25 +226,82 @@ class OpenPaymentsProcessor:
     ###################################################################################################
 
     def complete_payment(
-        self, interact_ref: str, received_hash: str, pending_payment: PendingIncomingPaymentTransaction
+        self,
+        interact_ref: str,
+        received_hash: str,
+        pending_payment: PendingIncomingPaymentTransaction,
     ) -> OutgoingPayment:
         """
         After purchaser approves interactive payment, webhook will receive confirmation permitting continuation.
 
         Use `key` to retrieve the original interactive grant request, and `interact_ref` to complete payment.
         """
-        if not pending_payment.finish_id or not pending_payment.continue_id:
-            e = "Payment completion impossible without both `finish_id` and `continue_id`."
-            raise ValueError(e)
+        if not isinstance(pending_payment, PendingIncomingPaymentTransaction):
+            raise ValueError("A stored pending payment transaction is required")
+        required = (
+            "client_nonce",
+            "grant_endpoint",
+            "finish_id",
+            "continue_id",
+            "continue_url",
+            "incoming_payment_id",
+            "quote_id",
+        )
+        missing = []
+        for name in required:
+            value = getattr(pending_payment, name)
+            if not value or (isinstance(value, str) and not value.strip()):
+                missing.append(name)
+        if missing:
+            raise ValueError("Stored payment state missing: " + ", ".join(missing))
+        token = pending_payment.continue_id
+        if (
+            not isinstance(token, str)
+            or not token.isascii()
+            or not token.isprintable()
+            or token != token.strip()
+        ):
+            raise ValueError(
+                "Stored continue_id must be a nonempty printable ASCII token"
+            )
+        continuation = pending_payment.continue_url
+        if (
+            not isinstance(continuation, AnyUrl)
+            or continuation.scheme not in ("http", "https")
+            or not continuation.host
+            or continuation.username is not None
+            or continuation.password is not None
+            or continuation.fragment is not None
+            or (continuation.port is not None and not 1 <= continuation.port <= 65535)
+        ):
+            raise ValueError("Stored continue_url must be an HTTP(S) request URL")
+        if (
+            pending_payment.seller.id != self.seller_wallet.id
+            or pending_payment.buyer.id != self.buyer_wallet.id
+        ):
+            raise ValueError("Stored payment state does not match processor wallets")
         # First validate the interactive response hash
         if not paymentsparser.verify_response_hash(
-            incoming_payment_id=str(pending_payment.id),
+            incoming_payment_id=pending_payment.client_nonce,
             finish_id=pending_payment.finish_id,
             interact_ref=interact_ref,
-            auth_server_url=str(pending_payment.buyer.authServer),
+            auth_server_url=pending_payment.grant_endpoint,
             received_hash=received_hash,
         ):
-            raise ValueError(f"Hash invalid for pending payment `{pending_payment.incoming_payment_id}`")
+            raise ValueError("Invalid interaction callback")
+        outgoing_payment_request = OutgoingPaymentRequest(
+            walletAddress=str(pending_payment.buyer.id),
+            quoteId=pending_payment.quote_id,
+            metadata={},
+        )
+        # Claim before the first mutation. An uncertain response must not replay.
+        # This synchronizes the same in-memory state; durable claims belong to the application.
+        with _transaction_lock:
+            if pending_payment.completion_started:
+                raise ValueError(
+                    "Payment completion already started for this transaction"
+                )
+            pending_payment.completion_started = True
         # Request a grant continuation
         grant_request = self.client.grants.post_grant_continuation_request(
             interact_ref=InteractRef(**dict(interact_ref=interact_ref)),
@@ -227,13 +310,6 @@ class OpenPaymentsProcessor:
         )
         access_token = grant_request.access_token.value
         # Create an outgoing payment from the `buyer`
-        outgoing_payment_request = OutgoingPaymentRequest(
-            **{
-                "walletAddress": str(pending_payment.buyer.id),
-                "quoteId": pending_payment.quote_id,
-                "metadata": {}
-            }
-        )
         return self.client.outgoing_payments.post_create_payment(
             payment=outgoing_payment_request,
             resource_server_endpoint=str(pending_payment.buyer.resourceServer),
