@@ -1,5 +1,6 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List
+
 
 class Key(BaseModel):
     kid: str
@@ -16,7 +17,9 @@ class KeyJwks(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+
 class KeyPair(BaseModel):
     jwks: KeyJwks
-    private_key_pem: str
+    private_key_pem: str = Field(repr=False)
 
+    model_config = ConfigDict(hide_input_in_errors=True)

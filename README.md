@@ -107,7 +107,7 @@ pip install </path/to/>open-payments-python-sdk/dist/open_payments_sdk-0.1.0-py3
 
 # Initialising the Client
 
-To create a client you can do so by importing the `OpenPaymentsClient` defined in the [`client`](./src/client/client.py) module and instantiating it.
+To create a client you can do so by importing the `OpenPaymentsClient` defined in the [`client`](./src/open_payments_sdk/client/client.py) module and instantiating it.
 
 ```python
 from open_payments_sdk.client.client import OpenPaymentsClient
@@ -115,37 +115,57 @@ from open_payments_sdk.client.client import OpenPaymentsClient
 with open("privkey.pem","r",encoding="utf_8") as privkey:
     private_key = privkey.read()
 
-op_client = OpenPaymentsClient(keyid="27b4f8d2-746c-4522-b3f0-874ca15bfe65",private_key=private_key)
+op_client = OpenPaymentsClient(
+    keyid="27b4f8d2-746c-4522-b3f0-874ca15bfe65",
+    private_key=private_key,
+    client_wallet_address="https://wallet.example/alice",
+)
 ```
 
-The client is to be created after you have created a key pair and have obtained the `kid` and `private_key`
+Create the client with the private PEM and the matching public key's registered `kid`.
 
-Some helper functions have been created to ease key pair creation. A class called `KeyManager` has been created and it provides functions to create a key pair and load a private key from UTF-8 string. It also returns an object that has information to be registered at the AS when registering the public key.
+## Ed25519 keys
+
+`KeyManager.generate_key_pair()` retains its existing `KeyPair` result: `private_key_pem` contains PKCS8 PEM and `jwks` contains public keys only. It generates a UUID key ID unless you supply `key_id`. Register the public key with your wallet provider before making authenticated requests.
 
 ```python
-import json
-from open_payments_sdk.gnap_utils.keys import KeyManager
+from open_payments_sdk import KeyManager, key_to_jwk, load_private_key, load_public_key
+from open_payments_sdk.client.client import OpenPaymentsClient
 
-key_manager = KeyManager()
-key_pair = key_manager.generate_key_pair() # generate key pair
+key_pair = KeyManager().generate_key_pair(key_id="my-signing-key")
+private_key = load_private_key(key_pair.private_key_pem, format="pem")
+public_jwk = key_to_jwk(private_key, key_id=key_pair.jwks.keys[0].kid)
+public_key = load_public_key(public_jwk, format="jwk")
 
-with open("privkey.pem", "w",encoding="utf_8") as pem_file: # save private key to file
-    pem_file.write(key_pair.private_key_pem)
-
-
-with open("jwks.json","w", encoding="utf_8") as jwks_file: # save jwks.json file
-    jwks_file.write(json.dumps(key_pair.jwks.keys[0].__dict__))
-
-
-with open("privkey.pem", "r", encoding="utf_8") as privkey: # load private key from file system
-    private_key = privkey.read()
-
-private_key = key_manager.load_ed25519_private_key_from_pem(
-    private_key
-) # load private key fron file utf_8 string
-
-public_key = private_key.public_key() # derive public key from private key
+# These are the values accepted by the existing OpenPaymentsClient constructor.
+op_client = OpenPaymentsClient(
+    keyid=key_pair.jwks.keys[0].kid,
+    private_key=key_pair.private_key_pem,
+    client_wallet_address="https://wallet.example/alice",
+)
 ```
+
+Both loaders require an explicit format and return native `cryptography` Ed25519 keys. The client constructor continues to accept a PEM string. The same loader/conversion methods are available on `KeyManager`, and the existing `load_ed25519_private_key_from_pem()` method remains available.
+
+| `format` | Input |
+| --- | --- |
+| `"pem"` | PEM text or bytes: one PKCS8 private key or one SPKI public key |
+| `"file"` | A filesystem path (`str` or `Path`) to that PEM |
+| `"base64"` | Canonical standard Base64 text or bytes encoding that entire PEM, without line wrapping |
+| `"jwk"` | One JWK mapping or Pydantic model; decode JSON text first |
+
+For example, load an existing key without generating or replacing it:
+
+```python
+from pathlib import Path
+
+private_key = load_private_key(Path("privkey.pem"), format="file")
+public_jwk = key_to_jwk(private_key, key_id="my-signing-key")
+```
+
+Encrypted private PEM inputs accept `password=b"your-password"` with `"pem"`, `"file"` or `"base64"`. Invalid inputs raise `ValueError`; loaders do not guess formats, select keys from a JWKS, fetch key URLs or create replacement keys. JWK metadata must permit Ed25519 signing/verification; coordinates must be canonical unpadded Base64url. A private JWK needs matching `x` and `d`; a public JWK must omit `d`.
+
+`key_to_jwk()` exports public material by default and adds a `kid` only when supplied. Exporting private `d` requires `include_private=True`. Private fields are hidden from ordinary `KeyPair` and `SellerOpenPaymentAccount` representations and validation-error messages; explicit attribute access and `model_dump()` still include them for application-owned persistence.
 
 ## Wallets
 

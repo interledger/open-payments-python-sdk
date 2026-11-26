@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel, Field, field_validator, AnyUrl
+from pydantic import BaseModel, ConfigDict, Field, field_validator, AnyUrl
 from ulid import ULID
 
 from ...models.wallet import WalletAddress
@@ -79,12 +79,15 @@ class SellerOpenPaymentAccount(BaseModel):
     )
     privateKey: str = Field(
         ...,
-        description="The types of actions the client instance will take at the RS as an array of strings.",
+        repr=False,
+        description="Private signing key, normalized to PEM for the existing client API.",
     )
     keyId: str = Field(
         ...,
         description="The types of actions the client instance will take at the RS as an array of strings.",
     )
+
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     @field_validator("walletAddressUrl", mode="before")
     @classmethod
