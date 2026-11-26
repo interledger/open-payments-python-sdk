@@ -1,14 +1,20 @@
 from collections.abc import Mapping
 from enum import Enum
+import re
 from typing import Annotated, Any, Literal, Optional, TypeAlias, Union
 from pydantic import (
+    AfterValidator,
     AnyUrl,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
+    Discriminator,
     Field,
     JsonValue,
     RootModel,
     StrictStr,
+    Tag,
+    TypeAdapter,
     field_validator,
     model_validator,
 )
@@ -182,8 +188,59 @@ class InteractResponse(BaseModel):
     finish: str = Field(..., description="Unique key to secure the callback.")
 
 
-class LimitsOutgoing(BaseModel):
-    receiver: Optional[AnyUrl] = Field(
+class PinWorkingKey(_GrantRequestModel):
+    key: StrictStr = Field(repr=False)
+    kvc: StrictStr = Field(repr=False)
+    iv: StrictStr = Field(repr=False)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CardAuthorization(_GrantRequestModel):
+    tlvData: StrictStr = Field(repr=False)
+    requestId: StrictStr
+    pinBlock: Omittable[StrictStr] = Field(default=None, repr=False)
+    pwk: Omittable[PinWorkingKey] = Field(default=None, repr=False)
+
+    model_config = ConfigDict(
+        extra="forbid", json_schema_extra={"dependentRequired": {"pinBlock": ["pwk"]}}
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def pin_requires_working_key(cls, value):
+        if (
+            isinstance(value, Mapping)
+            and value.get("pinBlock") is not None
+            and value.get("pwk") is None
+        ):
+            raise ValueError("pinBlock requires pwk")
+        return value
+
+
+_URI_STRING_ADAPTER = TypeAdapter(UriString)
+_ResourceUri: TypeAlias = Annotated[
+    AnyUrl, BeforeValidator(_URI_STRING_ADAPTER.validate_python)
+]
+_RECEIVER_PATTERN = r"^(https|http)://(.+)/incoming-payments/(.+)$"
+
+
+def _receiver_uri(value):
+    value = _URI_STRING_ADAPTER.validate_python(value)
+    if not re.search(_RECEIVER_PATTERN, value):
+        raise ValueError("receiver must be an HTTP(S) incoming-payment URI")
+    return value
+
+
+_ReceiverUri: TypeAlias = Annotated[
+    AnyUrl,
+    BeforeValidator(_receiver_uri),
+    Field(json_schema_extra={"pattern": _RECEIVER_PATTERN}),
+]
+
+
+class LimitsOutgoing(_GrantRequestModel):
+    receiver: Omittable[_ReceiverUri] = Field(
         None,
         description="The URL of the incoming payment that is being paid.",
         examples=[
@@ -193,15 +250,15 @@ class LimitsOutgoing(BaseModel):
         ],
         title="Receiver",
     )
-    debitAmount: Optional[Amount] = Field(
+    debitAmount: Omittable[Amount] = Field(
         None,
         description="All amounts are maxima, i.e. multiple payments can be created under a grant as long as the total amounts of these payments do not exceed the maximum amount per interval as specified in the grant.",
     )
-    receiveAmount: Optional[Amount] = Field(
+    receiveAmount: Omittable[Amount] = Field(
         None,
         description="All amounts are maxima, i.e. multiple payments can be created under a grant as long as the total amounts of these payments do not exceed the maximum amount per interval as specified in the grant.",
     )
-    interval: Optional[str] = Field(
+    interval: Omittable[StrictStr] = Field(
         None,
         description="[ISO8601 repeating interval](https://en.wikipedia.org/wiki/ISO_8601#Repeating_intervals)",
         examples=[
@@ -225,7 +282,16 @@ class InteractRef(BaseModel):
 ###################################################################################################
 
 
-class AccessIncoming(BaseModel):
+class _AccessModel(_GrantRequestModel):
+    @field_validator("actions", check_fields=False)
+    @classmethod
+    def unique_actions(cls, value):
+        if len(value) != len(set(value)):
+            raise ValueError("actions must contain unique values")
+        return value
+
+
+class AccessIncoming(_AccessModel):
     type: TypeIncoming = Field(
         ...,
         description="The type of resource request as a string.  This field defines which other fields are allowed in the request object.",
@@ -233,14 +299,15 @@ class AccessIncoming(BaseModel):
     actions: list[ActionIncoming] = Field(
         ...,
         description="The types of actions the client instance will take at the RS as an array of strings.",
+        json_schema_extra={"uniqueItems": True},
     )
-    identifier: Optional[AnyUrl] = Field(
+    identifier: Omittable[_ResourceUri] = Field(
         None,
         description="A string identifier indicating a specific resource at the RS.",
     )
 
 
-class AccessQuote(BaseModel):
+class AccessQuote(_AccessModel):
     type: TypeQuote = Field(
         ...,
         description="The type of resource request as a string.  This field defines which other fields are allowed in the request object.",
@@ -248,10 +315,11 @@ class AccessQuote(BaseModel):
     actions: list[ActionQuote] = Field(
         ...,
         description="The types of actions the client instance will take at the RS as an array of strings.",
+        json_schema_extra={"uniqueItems": True},
     )
 
 
-class AccessOutgoing(BaseModel):
+class AccessOutgoing(_AccessModel):
     type: TypeOutgoing = Field(
         ...,
         description="The type of resource request as a string.  This field defines which other fields are allowed in the request object.",
@@ -259,11 +327,62 @@ class AccessOutgoing(BaseModel):
     actions: list[ActionOutgoing] = Field(
         ...,
         description="The types of actions the client instance will take at the RS as an array of strings.",
+        json_schema_extra={"uniqueItems": True},
     )
-    identifier: AnyUrl = Field(
+    identifier: _ResourceUri = Field(
         ..., description="A string identifier indicating a specific resource at the RS."
     )
-    limits: Optional[LimitsOutgoing] = None
+    limits: Omittable[LimitsOutgoing] = None
+    cardAuthorization: Omittable[CardAuthorization] = Field(default=None, repr=False)
+
+
+def _access_kind(value):
+    kind = (
+        value.get("type")
+        if isinstance(value, Mapping)
+        else getattr(value, "type", None)
+    )
+    return kind.value if isinstance(kind, Enum) else kind
+
+
+AccessItem: TypeAlias = Annotated[
+    Annotated[AccessIncoming, Tag("incoming-payment")]
+    | Annotated[AccessOutgoing, Tag("outgoing-payment")]
+    | Annotated[AccessQuote, Tag("quote")],
+    Discriminator(_access_kind),
+]
+
+
+def _json_identity(value):
+    """Compare JSON values with object order ignored and bools distinct from numbers."""
+    if isinstance(value, dict):
+        return (
+            "object",
+            frozenset((key, _json_identity(item)) for key, item in value.items()),
+        )
+    if isinstance(value, list):
+        return ("array", tuple(_json_identity(item) for item in value))
+    if isinstance(value, bool):
+        return ("boolean", value)
+    if value is None:
+        return ("null",)
+    if isinstance(value, (int, float)):
+        return ("number", value)
+    return ("string", value)
+
+
+def _unique_access(value):
+    identities = [_json_identity(item.model_dump(mode="json")) for item in value]
+    if len(identities) != len(set(identities)):
+        raise ValueError("access must contain unique entries")
+    return value
+
+
+AccessList: TypeAlias = Annotated[
+    list[AccessItem],
+    Field(max_length=3, json_schema_extra={"uniqueItems": True}),
+    AfterValidator(_unique_access),
+]
 
 
 class AccessToken(BaseModel):
@@ -279,14 +398,15 @@ class AccessToken(BaseModel):
         None,
         description="The number of seconds in which the access will expire.  The client instance MUST NOT use the access token past this time.  An RS MUST NOT accept an access token past this time.",
     )
-    access: list[Union[AccessIncoming, AccessOutgoing, AccessQuote]]
+    access: AccessList
     model_config = ConfigDict(
         extra="forbid",
+        hide_input_in_errors=True,
     )
 
 
-class GrantRequestAccessToken(BaseModel):
-    access: list[Union[AccessIncoming, AccessOutgoing, AccessQuote]]
+class GrantRequestAccessToken(_GrantRequestModel):
+    access: AccessList
 
 
 class GrantRequest(_GrantRequestModel):
@@ -336,6 +456,8 @@ class ReservedKeyMappingModel(BaseModel):
     Base class that maps 'continue' to 'cont' in incoming data.
     """
 
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     @model_validator(mode="before")
     @classmethod
     def replace_continue_key(cls, values: Any) -> Any:
@@ -370,6 +492,7 @@ class Grant(RootModel[Union[InteractionInstructionsResponse, GrantResponse]]):
         description="The grant object, either interaction instructions or grant response",
         title="grant",
     )
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     def __getattr__(self, item: str) -> Any:
         return getattr(self.root, item)
@@ -378,3 +501,5 @@ class Grant(RootModel[Union[InteractionInstructionsResponse, GrantResponse]]):
 class GrantContinueResponse(BaseModel):
     access_token: AccessToken
     cont: Optional[Continue] = None
+
+    model_config = ConfigDict(hide_input_in_errors=True)

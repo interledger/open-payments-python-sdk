@@ -295,6 +295,12 @@ directed_request = GrantRequest(
 
 Subject information uses exactly one `sub_ids` entry with a string `id` and `format="uri"`. A subject-only request requires interaction. Access-token requests may also include subject information without interaction, following the specification's alternative request shapes. Directed JWK identities cannot include `interact`. Subject and interaction models retain permitted JSON extensions. Optional request fields stay absent when omitted; explicitly supplied nulls are invalid. Wallet and display URI strings are validated without changing their spelling; an existing `AnyUrl` uses its already normalized string value.
 
+Access permissions keep the existing type/action enums and retain permitted JSON extensions. Access lists contain up to three distinct serialized JSON entries; distinct entries may target the same resource type. Actions must be unique. Empty access and action arrays are permitted. Existing URI attributes on access identifiers and outgoing receivers remain `AnyUrl` values, with their existing normalization behavior.
+
+`LimitsOutgoing` accepts receiver and interval fields with debit and/or receive amounts. Each supplied amount uses the shared validated `Amount` contract. Receivers must match the specification's HTTP(S) incoming-payment URL pattern; interval values follow its string contract. Optional known fields stay absent when omitted and reject explicit nulls.
+
+`AccessOutgoing.cardAuthorization` accepts `CardAuthorization` with required `tlvData` and `requestId`, optional `pinBlock`, and optional `pwk` (`PinWorkingKey` with required `key`, `kvc` and `iv`). Providing `pinBlock` requires `pwk`; a PWK may also be supplied alone. These fields require strings, without imposing additional encoding or identifier formats. Card/PWK objects reject unknown fields. Card data and working-key fields are hidden in ordinary representations and validation-error text; explicit `model_dump()` includes them for transmission or application-owned persistence.
+
 You can use the created client to request a grant from the authorization server. In this case we will use it to request a grant for an incoming payment resource. Check the [fixtures](./tests/conftest.py) file to see the request body.
 
 ```python
