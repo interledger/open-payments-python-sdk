@@ -30,6 +30,11 @@ from .common import (
     UriString,
 )
 
+_URI_STRING_ADAPTER = TypeAdapter(UriString)
+_ResourceUri: TypeAlias = Annotated[
+    AnyUrl, BeforeValidator(_URI_STRING_ADAPTER.validate_python)
+]
+
 ###################################################################################################
 # ENUMERATED TYPES
 ###################################################################################################
@@ -45,7 +50,7 @@ class PaymentMethod(Enum):
 
 
 class PaymentListQuery(BaseModel):
-    walletAddress: AnyUrl = Field(
+    walletAddress: _ResourceUri = Field(
         ...,
         description="URL of a wallet address hosted by a Rafiki instance.",
         title="Wallet Address",
@@ -57,7 +62,10 @@ class PaymentListQuery(BaseModel):
     last: Omittable[PageSize] = None
 
     model_config = ConfigDict(
-        extra="forbid", validate_assignment=True, revalidate_instances="always"
+        extra="forbid",
+        hide_input_in_errors=True,
+        validate_assignment=True,
+        revalidate_instances="always",
     )
 
     @model_validator(mode="before")
@@ -108,10 +116,6 @@ class _ResourceModel(_JsonResourceModel):
         return value
 
 
-_URI_STRING_ADAPTER = TypeAdapter(UriString)
-_ResourceUri: TypeAlias = Annotated[
-    AnyUrl, BeforeValidator(_URI_STRING_ADAPTER.validate_python)
-]
 _Metadata: TypeAlias = dict[StrictStr, JsonValue]
 _RECEIVER_PATTERN = r"^(https|http)://(.+)/incoming-payments/(.+)$"
 

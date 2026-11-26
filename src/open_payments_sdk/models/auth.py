@@ -125,7 +125,7 @@ class Finish(_AuthModel):
         ...,
         description="The callback method that the AS will use to contact the client instance.",
     )
-    uri: AnyUrl = Field(
+    uri: _AuthUri = Field(
         ...,
         description="Indicates the URI that the AS will either send the RO to after interaction or send an HTTP POST request.",
     )

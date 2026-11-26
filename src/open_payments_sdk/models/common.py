@@ -18,6 +18,7 @@ from pydantic import (
     field_validator,
 )
 from pydantic.json_schema import SkipJsonSchema
+from rfc3986_validator import validate_rfc3986
 
 UINT64_MAX = 2**64 - 1
 
@@ -46,13 +47,14 @@ _URI_ADAPTER = TypeAdapter(AnyUrl)
 
 def _uri_string(value):
     if isinstance(value, AnyUrl):
-        return str(value)
+        value = str(value)
     if not isinstance(value, str):
         raise ValueError("URI must be a string or AnyUrl")
-    # URL parsers can repair whitespace, backslashes or invalid percent escapes.
-    # Reject those inputs rather than retain an invalid original wire value.
-    if re.search(r"[^A-Za-z0-9:/?#\[\]@!$&'()*+,;=._~%+-]|%(?![0-9A-Fa-f]{2})", value):
-        raise ValueError("URI must contain valid URI characters and percent escapes")
+    # Validate complete syntax before keeping the original spelling. The library's
+    # regex match can otherwise end before a final newline, so check its span too.
+    match = validate_rfc3986(value, rule="URI")
+    if match is None or match.end() != len(value):
+        raise ValueError("URI must be a valid absolute RFC3986 URI")
     _URI_ADAPTER.validate_python(value)
     return value
 

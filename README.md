@@ -175,6 +175,8 @@ Public `Key` and wallet `JsonWebKey` models require `kid`, `alg="EdDSA"`, `kty="
 
 Public-model `kid` follows the specification's string contract. Key generation, loading and signing apply the SDK's additional requirement that a supplied signing key ID be nonempty printable ASCII without surrounding whitespace. Normal public-model assignments validate too; Pydantic's trusted-data construction/copy methods bypass field validation, but serialization still blocks private `d` material.
 
+Grant identities, display and finish URIs, listing wallet URIs and payment resource URIs validate complete RFC3986 syntax, including authority, path, query and fragment boundaries. String fields in identities and display metadata retain valid input spelling; native `AnyUrl` values are checked after conversion to their existing normalized spelling. Invalid escapes, unescaped brackets outside IP literals, repeated fragment delimiters and malformed authority fields are rejected. IPv6 literals and properly percent-encoded components remain supported.
+
 ## Request signatures and content digests
 
 The SDK signs prepared requests using Ed25519 and SHA-512 content digests. The helpers below can verify an already signed, fully buffered `httpx.Request` independently of the SDK's request builder. Select the public key and key ID from a trusted registry before calling the verifier.
