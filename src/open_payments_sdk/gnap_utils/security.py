@@ -13,14 +13,19 @@ from open_payments_sdk.gnap_utils.http_signatures import OPKeyResolver, PatchedH
 from open_payments_sdk.gnap_utils.keys import KeyManager
 
 
-class SecurityBase():
+class SecurityBase:
     """
     Base class to provide shared functionality for making authenticated requests
     """
+
     def __init__(self, keyid: str, private_key: str, logger: Logger):
         self.key_manager = KeyManager()
         self.hash_manager = HashManager()
-        self.http_signatures = HTTPMessageSigner(signature_algorithm=algorithms.ED25519, key_resolver=OPKeyResolver(keyid=keyid,private_key=private_key),component_resolver_class=PatchedHTTPSignatureComponentResolver)
+        self.http_signatures = HTTPMessageSigner(
+            signature_algorithm=algorithms.ED25519,
+            key_resolver=OPKeyResolver(keyid=keyid, private_key=private_key),
+            component_resolver_class=PatchedHTTPSignatureComponentResolver,
+        )
         self.keyid = keyid
         self.private_key = private_key
         self.logger = logger
@@ -29,22 +34,17 @@ class SecurityBase():
         """
         Prepare Authorization GNAP header
         """
-        return {
-            "Authorization": f"GNAP {access_token}"
-        }
-    
-    def sign_request(self, message: Request, covered_component_ids: Sequence[str] )-> Request:
+        return {"Authorization": f"GNAP {access_token}"}
+
+    def sign_request(self, message: Request, covered_component_ids: Sequence[str]) -> Request:
         """
         Prepare http signature headers
         """
         self.http_signatures.sign(
-            message=message,
-            key_id=self.keyid,
-            covered_component_ids=covered_component_ids,
-            label="sig1"
+            message=message, key_id=self.keyid, covered_component_ids=covered_component_ids, label="sig1"
         )
         return message
-    
+
     def set_content_digest(self, request: Request) -> Request:
         """
         Compute Digest
@@ -52,4 +52,3 @@ class SecurityBase():
         digest = hashlib.sha512(request.content).digest()
         request.headers["Content-Digest"] = f"sha-512=:{base64.b64encode(digest).decode('ascii')}:"
         return request
-    

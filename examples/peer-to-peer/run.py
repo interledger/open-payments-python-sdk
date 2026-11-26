@@ -13,20 +13,12 @@ load_dotenv(Path(__file__).parent / ".env")
 from open_payments_sdk.client.client import OpenPaymentsClient
 from open_payments_sdk.gnap_utils.hash import HashManager
 from open_payments_sdk.models.auth import (
-    Access,
     AccessIncoming,
-    AccessItem,
     AccessOutgoing,
     AccessQuote,
     ActionIncoming,
     ActionOutgoing,
     ActionQuote,
-)
-from open_payments_sdk.models.auth import Amount as AuthAmount
-from open_payments_sdk.models.auth import AssetCode as AuthAssetCode
-from open_payments_sdk.models.auth import AssetScale as AuthAssetScale
-from open_payments_sdk.models.auth import (
-    Client,
     Finish,
     GrantRequest,
     GrantRequestAccessToken,
@@ -34,23 +26,18 @@ from open_payments_sdk.models.auth import (
     InteractRef,
     InteractRequest,
     LimitsOutgoing,
-    LimitsOutgoing2,
     Method,
     StartEnum,
     TypeIncoming,
     TypeOutgoing,
     TypeQuote,
 )
-from open_payments_sdk.models.resource import Amount as ResourceAmount
-from open_payments_sdk.models.resource import AssetCode as ResourceAssetCode
-from open_payments_sdk.models.resource import AssetScale as ResourceAssetScale
 from open_payments_sdk.models.resource import (
+    Amount,
     IncomingPaymentRequest,
     OutgoingPaymentRequest,
-    OutgoingPaymentRequestWithQuote,
+    PaymentMethod,
     QuoteRequest,
-    QuoteRequestBase,
-    WalletAddress,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -109,22 +96,18 @@ def main():
     incoming_payment_grant = client.grants.post_grant_request(
         grant_request=GrantRequest(
             access_token=GrantRequestAccessToken(
-                access=Access(
-                    root=[
-                        AccessItem(
-                            root=AccessIncoming(
-                                type=TypeIncoming.incoming_payment,
-                                actions=[
-                                    ActionIncoming.read,
-                                    ActionIncoming.complete,
-                                    ActionIncoming.create,
-                                ],
-                            )
-                        )
-                    ]
-                )
+                access=[
+                    AccessIncoming(
+                        type=TypeIncoming.incoming_payment,
+                        actions=[
+                            ActionIncoming.read,
+                            ActionIncoming.complete,
+                            ActionIncoming.create,
+                        ],
+                    )
+                ]
             ),
-            client=Client(root=CLIENT_WALLET_ADDRESS_URL),
+            client=CLIENT_WALLET_ADDRESS_URL,
         ),
         auth_server_endpoint=str(receiving_wallet.authServer),
     )
@@ -142,11 +125,11 @@ def main():
     # Step 3: Create the incoming payment. This is where funds will be received.
     incoming_payment = client.incoming_payments.post_create_payment(
         payment=IncomingPaymentRequest(
-            walletAddress=WalletAddress(root=str(receiving_wallet.id)),
-            incomingAmount=ResourceAmount(
+            walletAddress=str(receiving_wallet.id),
+            incomingAmount=Amount(
                 value="1000",
-                assetCode=ResourceAssetCode(root=receiving_wallet.assetCode.root),
-                assetScale=ResourceAssetScale(root=receiving_wallet.assetScale.root),
+                assetCode=receiving_wallet.assetCode,
+                assetScale=receiving_wallet.assetScale,
             ),
             metadata={"description": "From peer-to-peer example script"},
         ),
@@ -163,18 +146,14 @@ def main():
     quote_grant = client.grants.post_grant_request(
         grant_request=GrantRequest(
             access_token=GrantRequestAccessToken(
-                access=Access(
-                    root=[
-                        AccessItem(
-                            root=AccessQuote(
-                                type=TypeQuote.quote,
-                                actions=[ActionQuote.create, ActionQuote.read],
-                            )
-                        )
-                    ]
-                )
+                access=[
+                    AccessQuote(
+                        type=TypeQuote.quote,
+                        actions=[ActionQuote.create, ActionQuote.read],
+                    )
+                ]
             ),
-            client=Client(root=CLIENT_WALLET_ADDRESS_URL),
+            client=CLIENT_WALLET_ADDRESS_URL,
         ),
         auth_server_endpoint=str(sending_wallet.authServer),
     )
@@ -188,11 +167,9 @@ def main():
     # into the incoming payment
     quote = client.quotes.post_create_quote(
         quote=QuoteRequest(
-            root=QuoteRequestBase(
-                walletAddress=WalletAddress(root=str(sending_wallet.id)),
-                receiver=str(incoming_payment.id),
-                method="ilp",
-            )
+            walletAddress=str(sending_wallet.id),
+            receiver=str(incoming_payment.id),
+            method=PaymentMethod.ilp,
         ),
         resource_server_endpoint=str(sending_wallet.resourceServer),
         access_token=quote_grant.root.access_token.value,
@@ -208,32 +185,22 @@ def main():
     outgoing_payment_grant = client.grants.post_grant_request(
         grant_request=GrantRequest(
             access_token=GrantRequestAccessToken(
-                access=Access(
-                    root=[
-                        AccessItem(
-                            root=AccessOutgoing(
-                                type=TypeOutgoing.outgoing_payment,
-                                actions=[ActionOutgoing.read, ActionOutgoing.create],
-                                identifier=str(sending_wallet.id),
-                                limits=LimitsOutgoing(
-                                    root=LimitsOutgoing2(
-                                        debitAmount=AuthAmount(
-                                            value=quote.debitAmount.value,
-                                            assetCode=AuthAssetCode(
-                                                root=quote.debitAmount.assetCode.root
-                                            ),
-                                            assetScale=AuthAssetScale(
-                                                root=quote.debitAmount.assetScale.root
-                                            ),
-                                        )
-                                    )
-                                ),
+                access=[
+                    AccessOutgoing(
+                        type=TypeOutgoing.outgoing_payment,
+                        actions=[ActionOutgoing.read, ActionOutgoing.create],
+                        identifier=str(sending_wallet.id),
+                        limits=LimitsOutgoing(
+                            debitAmount=Amount(
+                                value=quote.debitAmount.value,
+                                assetCode=quote.debitAmount.assetCode,
+                                assetScale=quote.debitAmount.assetScale,
                             )
-                        )
-                    ]
-                )
+                        ),
+                    )
+                ]
             ),
-            client=Client(root=CLIENT_WALLET_ADDRESS_URL),
+            client=CLIENT_WALLET_ADDRESS_URL,
             interact=InteractRequest(
                 start=[StartEnum.redirect],
                 finish=Finish(
@@ -306,11 +273,9 @@ def main():
     # This makes a payment from the sender to the incoming payment (over ILP).
     outgoing_payment = client.outgoing_payments.post_create_payment(
         payment=OutgoingPaymentRequest(
-            root=OutgoingPaymentRequestWithQuote(
-                walletAddress=WalletAddress(root=str(sending_wallet.id)),
-                quoteId=str(quote.id),
-                metadata={"description": "Sent from peer-to-peer example script"},
-            )
+            walletAddress=str(sending_wallet.id),
+            quoteId=str(quote.id),
+            metadata={"description": "Sent from peer-to-peer example script"},
         ),
         resource_server_endpoint=str(sending_wallet.resourceServer),
         access_token=finalized_outgoing_payment_grant.access_token.value,
