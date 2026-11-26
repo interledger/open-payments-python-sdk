@@ -1,14 +1,18 @@
 """Shared scalar and page contracts from the pinned Open Payments schemas."""
 
 from typing import Annotated, TypeAlias, TypeVar
+import re
 
 from pydantic import (
     AfterValidator,
+    AnyUrl,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     JsonValue,
     StrictBool,
+    TypeAdapter,
     field_validator,
 )
 from pydantic.json_schema import SkipJsonSchema
@@ -34,6 +38,26 @@ AssetCode: TypeAlias = Annotated[str, Field(strict=True)]
 AssetScale: TypeAlias = Annotated[int, Field(strict=True, ge=0, le=255)]
 Cursor: TypeAlias = Annotated[str, Field(strict=True, min_length=1)]
 PageSize: TypeAlias = Annotated[int, Field(strict=True, ge=1, le=100)]
+
+_URI_ADAPTER = TypeAdapter(AnyUrl)
+
+
+def _uri_string(value):
+    if isinstance(value, AnyUrl):
+        return str(value)
+    if not isinstance(value, str):
+        raise ValueError("URI must be a string or AnyUrl")
+    # URL parsers can repair whitespace, backslashes or invalid percent escapes.
+    # Reject those inputs rather than retain an invalid original wire value.
+    if re.search(r"[^A-Za-z0-9:/?#\[\]@!$&'()*+,;=._~%+-]|%(?![0-9A-Fa-f]{2})", value):
+        raise ValueError("URI must contain valid URI characters and percent escapes")
+    _URI_ADAPTER.validate_python(value)
+    return value
+
+
+UriString: TypeAlias = Annotated[
+    str, BeforeValidator(_uri_string), Field(json_schema_extra={"format": "uri"})
+]
 
 
 def _is_none(value):

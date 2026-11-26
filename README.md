@@ -265,6 +265,36 @@ wallet_jwks = op_client.wallet.get_keys("https://ilp.interledger-test.dev/elijah
 
 ## Grants
 
+Every `GrantRequest` requires a client identity. Use `ClientWalletAddress` for a wallet object, or `ClientDirectedIdentity` with a public JWK for a non-interactive grant. The existing wallet URI string remains supported; the specification marks that string form deprecated. Object identities may include `ClientDisplay` with optional `name`, `uri` and `logo_uri`, including a `data:` image URI. Identity and display objects reject unknown fields and cannot combine `walletAddress` with `jwk`.
+
+```python
+from open_payments_sdk.models.auth import (
+    ClientDirectedIdentity,
+    ClientDisplay,
+    ClientWalletAddress,
+    GrantRequest,
+)
+
+access_request = GrantRequest(
+    client=ClientWalletAddress(
+        walletAddress="https://wallet.example/alice",
+        display=ClientDisplay(name="My application"),
+    ),
+    access_token={"access": [{"type": "incoming-payment", "actions": ["create"]}]},
+)
+subject_request = GrantRequest(
+    client=access_request.client,
+    subject={"sub_ids": [{"id": "https://wallet.example/alice", "format": "uri"}]},
+    interact={"start": ["redirect"]},
+)
+directed_request = GrantRequest(
+    client=ClientDirectedIdentity(jwk=key_pair.jwks.keys[0]),
+    access_token=access_request.access_token,
+)
+```
+
+Subject information uses exactly one `sub_ids` entry with a string `id` and `format="uri"`. A subject-only request requires interaction. Access-token requests may also include subject information without interaction, following the specification's alternative request shapes. Directed JWK identities cannot include `interact`. Subject and interaction models retain permitted JSON extensions. Optional request fields stay absent when omitted; explicitly supplied nulls are invalid. Wallet and display URI strings are validated without changing their spelling; an existing `AnyUrl` uses its already normalized string value.
+
 You can use the created client to request a grant from the authorization server. In this case we will use it to request a grant for an incoming payment resource. Check the [fixtures](./tests/conftest.py) file to see the request body.
 
 ```python
