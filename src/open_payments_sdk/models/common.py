@@ -1,11 +1,13 @@
 """Shared scalar and page contracts from the pinned Open Payments schemas."""
 
 from typing import Annotated, TypeAlias, TypeVar
+from datetime import datetime
 import re
 
 from pydantic import (
     AfterValidator,
     AnyUrl,
+    AwareDatetime,
     BaseModel,
     BeforeValidator,
     ConfigDict,
@@ -58,6 +60,24 @@ def _uri_string(value):
 UriString: TypeAlias = Annotated[
     str, BeforeValidator(_uri_string), Field(json_schema_extra={"format": "uri"})
 ]
+
+
+def _date_time(value):
+    if isinstance(value, datetime):
+        offset = value.utcoffset()
+        if offset is not None and offset.total_seconds() % 60:
+            raise ValueError("date-time offset must use whole minutes")
+        return value
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}"
+        r"(?:\.[0-9]+)?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})",
+        value,
+    ):
+        raise ValueError("date-time must be an offset timestamp or aware datetime")
+    return value
+
+
+ProtocolDateTime: TypeAlias = Annotated[AwareDatetime, BeforeValidator(_date_time)]
 
 
 def _is_none(value):

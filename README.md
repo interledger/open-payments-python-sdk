@@ -239,6 +239,16 @@ Query counts are integers from 1 through 100. At most one of `first` and `last` 
 
 Amount values and asset codes require strings; scales and counts require integers; page flags require booleans. Incompatible types and cross-type coercions are rejected. Assignments to amount fields and wallet asset fields are validated too. The Pydantic `model_construct()`/`model_copy(update=...)` escape hatches assume trusted data; query export revalidates before returning parameters.
 
+## Incoming payment models
+
+`IncomingPaymentRequest` accepts the required wallet address and optional incoming amount, expiry and metadata; unknown request fields and explicit nulls are rejected. Metadata must be a JSON object with finite JSON values. Use the wallet's asset code and scale for the incoming amount.
+
+`IncomingPayment` models detailed create/list/complete results. `IncomingPaymentResponse` adds required payment methods for authenticated reads. `PublicIncomingPayment` models public discovery with required authorization-server and method fields, without requiring a wallet address or metadata. Every response requires `id`, `completed`, `receivedAmount` and `createdAt`; `completed` requires a boolean. Response models retain permitted JSON extensions. Existing `updatedAt`, `methods` and `authServer` fields remain available as typed optional extensions where applicable.
+
+Methods retain the existing `PaymentMethod.ilp` enum, validate the ILP address and Base64url character contracts, and reject unknown fields. Method arrays may be empty and must contain unique entries. Shared secrets are hidden in ordinary representations and validation-error text; explicit attribute access and dumps retain them.
+
+Incoming-payment timestamps use offset [date-time strings](https://spec.openapis.org/registry/format/date-time) or timezone-aware Python `datetime` values. Numeric timestamps, dates without a time and timestamps without an offset are rejected. Serialization uses Python datetime precision and normalization; leap seconds cannot be represented. URI attributes retain the existing `AnyUrl` behavior. Optional known fields are omitted when absent and reject explicit nulls.
+
 ## Wallets
 
 You can use the created client to interact with the resource server. In this case we will use it to interact with a wallet address to get the wallet address details and jwks.json

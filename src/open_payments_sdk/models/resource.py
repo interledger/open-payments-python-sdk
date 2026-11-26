@@ -1,20 +1,34 @@
 from datetime import datetime
 from enum import Enum
 from collections.abc import Mapping
-from typing import Any, Optional
+from typing import Annotated, Any, Optional, TypeAlias
 
 from pydantic import (
     AliasChoices,
+    AfterValidator,
     AnyUrl,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     HttpUrl,
+    JsonValue,
+    StrictBool,
+    StrictStr,
+    TypeAdapter,
     field_validator,
     model_validator,
 )
 
-from .common import Amount, Cursor, Omittable, PageInfo, PageSize
+from .common import (
+    Amount,
+    Cursor,
+    Omittable,
+    PageInfo,
+    PageSize,
+    ProtocolDateTime,
+    UriString,
+)
 
 ###################################################################################################
 # ENUMERATED TYPES
@@ -74,22 +88,64 @@ class Pagination(PageInfo):
 ###################################################################################################
 
 
-class IlpPaymentMethod(BaseModel):
+class _ResourceModel(BaseModel):
+    __pydantic_extra__: dict[str, JsonValue]
+
+    model_config = ConfigDict(
+        extra="allow",
+        allow_inf_nan=False,
+        hide_input_in_errors=True,
+        validate_assignment=True,
+    )
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        if value is None:
+            raise ValueError("field may be omitted but must not be null")
+        return value
+
+
+_URI_STRING_ADAPTER = TypeAdapter(UriString)
+_ResourceUri: TypeAlias = Annotated[
+    AnyUrl, BeforeValidator(_URI_STRING_ADAPTER.validate_python)
+]
+_Metadata: TypeAlias = dict[StrictStr, JsonValue]
+
+
+class IlpPaymentMethod(_ResourceModel):
     type: PaymentMethod
-    ilpAddress: str = Field(
+    ilpAddress: StrictStr = Field(
         ...,
         description="The ILP address to use when establishing a STREAM connection.",
         pattern=r"^(g|private|example|peer|self|test[1-3]?|local)([.][a-zA-Z0-9_~-]+)+$",
         max_length=1023,
     )
-    sharedSecret: str = Field(
+    sharedSecret: StrictStr = Field(
         ...,
         description="The base64 url-encoded shared secret to use when establishing a STREAM connection.",
-        pattern=r"^[a-zA-Z0-9-_]+$",
+        pattern=r"^[a-zA-Z0-9_-]+$",
+        repr=False,
     )
     model_config = ConfigDict(
         extra="forbid",
     )
+
+
+def _unique_methods(value):
+    identities = [
+        (method.type, method.ilpAddress, method.sharedSecret) for method in value
+    ]
+    if len(identities) != len(set(identities)):
+        raise ValueError("methods must contain unique entries")
+    return value
+
+
+IncomingPaymentMethods: TypeAlias = Annotated[
+    list[IlpPaymentMethod],
+    Field(min_length=0, json_schema_extra={"uniqueItems": True}),
+    AfterValidator(_unique_methods),
+]
 
 
 ###################################################################################################
@@ -97,29 +153,36 @@ class IlpPaymentMethod(BaseModel):
 ###################################################################################################
 
 
-class IncomingPaymentRequest(BaseModel):
-    walletAddress: AnyUrl = Field(
+class IncomingPaymentRequest(_ResourceModel):
+    walletAddress: _ResourceUri = Field(
         ...,
         description="URL of a wallet address hosted by a Rafiki instance.",
         title="Wallet Address",
     )
-    incomingAmount: Optional[Amount] = Field(
+    incomingAmount: Omittable[Amount] = Field(
         None,
         description="The maximum amount that should be paid into the wallet address under this incoming payment.",
     )
-    expiresAt: Optional[datetime] = Field(
+    expiresAt: Omittable[
+        Annotated[ProtocolDateTime, Field(json_schema_extra={"writeOnly": True})]
+    ] = Field(
         None,
         description="The date and time when payments under this incoming payment will no longer be accepted.",
     )
-    metadata: Optional[dict[str, Any]] = Field(
+    metadata: Omittable[_Metadata] = Field(
         None,
         description="Additional metadata associated with the incoming payment. (Optional)",
     )
+    model_config = ConfigDict(extra="forbid")
 
 
-class IncomingPayment(IncomingPaymentRequest):
-    id: AnyUrl = Field(..., description="The URL identifying the incoming payment.")
-    completed: bool = Field(
+class _IncomingPaymentBase(_ResourceModel):
+    id: _ResourceUri = Field(
+        ...,
+        description="The URL identifying the incoming payment.",
+        json_schema_extra={"readOnly": True},
+    )
+    completed: StrictBool = Field(
         ...,
         description="Describes whether the incoming payment has completed receiving fund.",
     )
@@ -127,32 +190,51 @@ class IncomingPayment(IncomingPaymentRequest):
         ...,
         description="The total amount that has been paid into the wallet address under this incoming payment.",
     )
-    createdAt: datetime = Field(
+    incomingAmount: Omittable[Amount] = None
+    expiresAt: Omittable[ProtocolDateTime] = None
+    createdAt: ProtocolDateTime = Field(
         ..., description="The date and time when the incoming payment was created."
     )
-    updatedAt: Optional[datetime] = Field(
+    updatedAt: Omittable[ProtocolDateTime] = Field(
         None, description="The date and time when the incoming payment was updated."
     )
 
 
+class IncomingPayment(_IncomingPaymentBase):
+    walletAddress: _ResourceUri = Field(
+        ...,
+        description="The wallet address this payment is made into.",
+        json_schema_extra={"readOnly": True},
+    )
+    metadata: Omittable[_Metadata] = None
+    # Typed provider/legacy extensions also protect method secrets on create responses.
+    methods: Omittable[IncomingPaymentMethods] = Field(default=None, repr=False)
+    authServer: Omittable[_ResourceUri] = None
+
+
 class IncomingPaymentResponse(IncomingPayment):
-    receivedAmount: Optional[Amount] = None
-    authServer: AnyUrl = Field(
+    methods: IncomingPaymentMethods = Field(
         ...,
-        description="The URL of the authorization server endpoint for getting grants and access tokens for this wallet address.",
-    )
-    methods: list[IlpPaymentMethod] = Field(
-        ...,
-        description="The list of payment methods supported by this incoming payment.",
-        min_length=0,
+        description="The payment methods supported by this authenticated incoming payment.",
+        repr=False,
     )
 
 
-class PaginatedIncomingPayments(BaseModel):
+class PublicIncomingPayment(_IncomingPaymentBase):
+    authServer: _ResourceUri = Field(
+        ...,
+        description="The authorization server for this incoming payment's wallet.",
+    )
+    methods: IncomingPaymentMethods = Field(
+        ...,
+        description="The payment methods supported by this public incoming payment.",
+        repr=False,
+    )
+
+
+class PaginatedIncomingPayments(_ResourceModel):
     pagination: Pagination
     result: list[IncomingPayment]
-
-    model_config = ConfigDict(extra="allow")
 
 
 class QuoteRequest(BaseModel):
