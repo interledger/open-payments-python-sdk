@@ -148,6 +148,12 @@
               "identifier": "https://sender.example/alice"
             }
           ]
+        },
+        "continue": {
+          "uri": "https://server.example.com/continue/opaque",
+          "access_token": {
+            "value": "next-example-continuation-secret"
+          }
         }
       }
     },

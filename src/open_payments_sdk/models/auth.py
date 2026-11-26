@@ -1,9 +1,10 @@
 from collections.abc import Mapping
 from enum import Enum
 import re
-from typing import Annotated, Any, Literal, Optional, TypeAlias, Union
+from typing import Annotated, Any, Literal, TypeAlias
 from pydantic import (
     AfterValidator,
+    AliasChoices,
     AnyUrl,
     BaseModel,
     BeforeValidator,
@@ -12,6 +13,7 @@ from pydantic import (
     Field,
     JsonValue,
     RootModel,
+    StrictInt,
     StrictStr,
     Tag,
     TypeAdapter,
@@ -22,6 +24,11 @@ from pydantic import (
 from .common import Omittable, UriString
 from .keys import Key
 from .resource import Amount
+
+_URI_STRING_ADAPTER = TypeAdapter(UriString)
+_AuthUri: TypeAlias = Annotated[
+    AnyUrl, BeforeValidator(_URI_STRING_ADAPTER.validate_python)
+]
 
 ###################################################################################################
 # ENUMERATED TYPES
@@ -76,26 +83,7 @@ class Method(Enum):
 ###################################################################################################
 
 
-class AccessTokenContinue(BaseModel):
-    value: str
-
-
-class Continue(BaseModel):
-    access_token: AccessTokenContinue = Field(
-        ...,
-        description='A unique access token for continuing the request, called the "continuation access token".',
-    )
-    uri: AnyUrl = Field(
-        ...,
-        description="The URI at which the client instance can make continuation requests.",
-    )
-    wait: Optional[int] = Field(
-        None,
-        description="The amount of time in integer seconds the client instance MUST wait after receiving this request continuation response and calling the continuation URI.",
-    )
-
-
-class _GrantRequestModel(BaseModel):
+class _AuthModel(BaseModel):
     __pydantic_extra__: dict[str, JsonValue]
 
     model_config = ConfigDict(
@@ -113,7 +101,26 @@ class _GrantRequestModel(BaseModel):
         return value
 
 
-class Finish(_GrantRequestModel):
+class AccessTokenContinue(_AuthModel):
+    value: StrictStr = Field(repr=False)
+
+
+class Continue(_AuthModel):
+    access_token: AccessTokenContinue = Field(
+        ...,
+        description='A unique access token for continuing the request, called the "continuation access token".',
+    )
+    uri: _AuthUri = Field(
+        ...,
+        description="The URI at which the client instance can make continuation requests.",
+    )
+    wait: Omittable[StrictInt] = Field(
+        None,
+        description="The amount of time in integer seconds the client instance MUST wait after receiving this request continuation response and calling the continuation URI.",
+    )
+
+
+class Finish(_AuthModel):
     method: Method = Field(
         ...,
         description="The callback method that the AS will use to contact the client instance.",
@@ -128,7 +135,7 @@ class Finish(_GrantRequestModel):
     )
 
 
-class InteractRequest(_GrantRequestModel):
+class InteractRequest(_AuthModel):
     start: list[StartEnum] = Field(
         ..., description="Indicates how the client instance can start an interaction."
     )
@@ -138,7 +145,7 @@ class InteractRequest(_GrantRequestModel):
     )
 
 
-class ClientDisplay(_GrantRequestModel):
+class ClientDisplay(_AuthModel):
     name: Omittable[StrictStr] = None
     uri: Omittable[UriString] = None
     logo_uri: Omittable[UriString] = None
@@ -146,14 +153,14 @@ class ClientDisplay(_GrantRequestModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ClientWalletAddress(_GrantRequestModel):
+class ClientWalletAddress(_AuthModel):
     walletAddress: UriString
     display: Omittable[ClientDisplay] = None
 
     model_config = ConfigDict(extra="forbid")
 
 
-class ClientDirectedIdentity(_GrantRequestModel):
+class ClientDirectedIdentity(_AuthModel):
     jwk: Key
     display: Omittable[ClientDisplay] = None
 
@@ -174,21 +181,21 @@ Client: TypeAlias = (
 )
 
 
-class SubjectId(_GrantRequestModel):
+class SubjectId(_AuthModel):
     id: StrictStr
     format: Literal["uri"]
 
 
-class Subject(_GrantRequestModel):
+class Subject(_AuthModel):
     sub_ids: list[SubjectId] = Field(min_length=1, max_length=1)
 
 
-class InteractResponse(BaseModel):
-    redirect: AnyUrl = Field(..., description="The URI to direct the end user to.")
-    finish: str = Field(..., description="Unique key to secure the callback.")
+class InteractResponse(_AuthModel):
+    redirect: _AuthUri = Field(..., description="The URI to direct the end user to.")
+    finish: StrictStr = Field(..., description="Unique key to secure the callback.")
 
 
-class PinWorkingKey(_GrantRequestModel):
+class PinWorkingKey(_AuthModel):
     key: StrictStr = Field(repr=False)
     kvc: StrictStr = Field(repr=False)
     iv: StrictStr = Field(repr=False)
@@ -196,7 +203,7 @@ class PinWorkingKey(_GrantRequestModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class CardAuthorization(_GrantRequestModel):
+class CardAuthorization(_AuthModel):
     tlvData: StrictStr = Field(repr=False)
     requestId: StrictStr
     pinBlock: Omittable[StrictStr] = Field(default=None, repr=False)
@@ -218,10 +225,6 @@ class CardAuthorization(_GrantRequestModel):
         return value
 
 
-_URI_STRING_ADAPTER = TypeAdapter(UriString)
-_ResourceUri: TypeAlias = Annotated[
-    AnyUrl, BeforeValidator(_URI_STRING_ADAPTER.validate_python)
-]
 _RECEIVER_PATTERN = r"^(https|http)://(.+)/incoming-payments/(.+)$"
 
 
@@ -239,7 +242,7 @@ _ReceiverUri: TypeAlias = Annotated[
 ]
 
 
-class LimitsOutgoing(_GrantRequestModel):
+class LimitsOutgoing(_AuthModel):
     receiver: Omittable[_ReceiverUri] = Field(
         None,
         description="The URL of the incoming payment that is being paid.",
@@ -270,9 +273,9 @@ class LimitsOutgoing(_GrantRequestModel):
     )
 
 
-class InteractRef(BaseModel):
-    interact_ref: str = Field(
-        ...,
+class InteractRef(_AuthModel):
+    interact_ref: Omittable[StrictStr] = Field(
+        None,
         description="The interaction reference generated for this interaction by the AS.",
     )
 
@@ -282,7 +285,7 @@ class InteractRef(BaseModel):
 ###################################################################################################
 
 
-class _AccessModel(_GrantRequestModel):
+class _AccessModel(_AuthModel):
     @field_validator("actions", check_fields=False)
     @classmethod
     def unique_actions(cls, value):
@@ -301,7 +304,7 @@ class AccessIncoming(_AccessModel):
         description="The types of actions the client instance will take at the RS as an array of strings.",
         json_schema_extra={"uniqueItems": True},
     )
-    identifier: Omittable[_ResourceUri] = Field(
+    identifier: Omittable[_AuthUri] = Field(
         None,
         description="A string identifier indicating a specific resource at the RS.",
     )
@@ -329,7 +332,7 @@ class AccessOutgoing(_AccessModel):
         description="The types of actions the client instance will take at the RS as an array of strings.",
         json_schema_extra={"uniqueItems": True},
     )
-    identifier: _ResourceUri = Field(
+    identifier: _AuthUri = Field(
         ..., description="A string identifier indicating a specific resource at the RS."
     )
     limits: Omittable[LimitsOutgoing] = None
@@ -385,16 +388,17 @@ AccessList: TypeAlias = Annotated[
 ]
 
 
-class AccessToken(BaseModel):
-    value: str = Field(
+class AccessToken(_AuthModel):
+    value: StrictStr = Field(
         ...,
+        repr=False,
         description="The value of the access token as a string.  The value is opaque to the client instance.  The value SHOULD be limited to ASCII characters to facilitate transmission over HTTP headers within other protocols without requiring additional encoding.",
     )
-    manage: AnyUrl = Field(
+    manage: _AuthUri = Field(
         ...,
         description="The management URI for this access token. This URI MUST NOT include the access token value and SHOULD be different for each access token issued in a request.",
     )
-    expires_in: Optional[int] = Field(
+    expires_in: Omittable[StrictInt] = Field(
         None,
         description="The number of seconds in which the access will expire.  The client instance MUST NOT use the access token past this time.  An RS MUST NOT accept an access token past this time.",
     )
@@ -405,11 +409,11 @@ class AccessToken(BaseModel):
     )
 
 
-class GrantRequestAccessToken(_GrantRequestModel):
+class GrantRequestAccessToken(_AuthModel):
     access: AccessList
 
 
-class GrantRequest(_GrantRequestModel):
+class GrantRequest(_AuthModel):
     access_token: Omittable[GrantRequestAccessToken] = None
     client: Client = Field(
         description="Required client identity: wallet URI string, wallet-address object, or public JWK object.",
@@ -451,35 +455,74 @@ class GrantRequest(_GrantRequestModel):
         return value
 
 
-class ReservedKeyMappingModel(BaseModel):
-    """
-    Base class that maps 'continue' to 'cont' in incoming data.
-    """
+class ReservedKeyMappingModel(_AuthModel):
+    """Accept wire/legacy continuation names without mutating the input."""
 
-    model_config = ConfigDict(hide_input_in_errors=True)
+    model_config = ConfigDict(serialize_by_alias=True)
 
     @model_validator(mode="before")
     @classmethod
-    def replace_continue_key(cls, values: Any) -> Any:
-        """
-        Map continue to cont
-        """
-        if isinstance(values, dict) and "continue" in values:
-            values["cont"] = values.pop("continue")
+    def single_continue_alias(cls, values):
+        if isinstance(values, Mapping) and "continue" in values and "cont" in values:
+            raise ValueError("supply only one of continue or cont")
         return values
 
 
 class InteractionInstructionsResponse(ReservedKeyMappingModel):
     interact: InteractResponse
-    cont: Continue
+    cont: Continue = Field(
+        validation_alias=AliasChoices("continue", "cont"),
+        serialization_alias="continue",
+    )
+    model_config = ConfigDict(json_schema_extra={"not": {"required": ["access_token"]}})
+
+    @model_validator(mode="before")
+    @classmethod
+    def pending_only(cls, value):
+        if isinstance(value, Mapping) and "access_token" in value:
+            raise ValueError("pending grant must not include access_token")
+        return value
 
 
 class GrantResponse(ReservedKeyMappingModel):
     access_token: AccessToken
-    cont: Continue
+    cont: Continue = Field(
+        validation_alias=AliasChoices("continue", "cont"),
+        serialization_alias="continue",
+    )
+    model_config = ConfigDict(json_schema_extra={"not": {"required": ["interact"]}})
+
+    @model_validator(mode="before")
+    @classmethod
+    def approved_only(cls, value):
+        if isinstance(value, Mapping) and "interact" in value:
+            raise ValueError("approved grant must not include interact")
+        return value
 
 
-class Grant(RootModel[Union[InteractionInstructionsResponse, GrantResponse]]):
+def _grant_kind(value):
+    if isinstance(value, InteractionInstructionsResponse):
+        return "pending"
+    if isinstance(value, GrantResponse):
+        return "approved"
+    if isinstance(value, Mapping):
+        if "interact" in value and "access_token" in value:
+            return "mixed"
+        if "interact" in value:
+            return "pending"
+        if "access_token" in value:
+            return "approved"
+    return None
+
+
+_InitialGrant: TypeAlias = Annotated[
+    Annotated[InteractionInstructionsResponse, Tag("pending")]
+    | Annotated[GrantResponse, Tag("approved")],
+    Discriminator(_grant_kind),
+]
+
+
+class Grant(RootModel[_InitialGrant]):
     """
     Reference https://docs.pydantic.dev/latest/concepts/models/#rootmodel-and-custom-root-types
 
@@ -487,19 +530,33 @@ class Grant(RootModel[Union[InteractionInstructionsResponse, GrantResponse]]):
           get direct to the fields.
     """
 
-    root: Union[InteractionInstructionsResponse, GrantResponse] = Field(
+    root: _InitialGrant = Field(
         ...,
         description="The grant object, either interaction instructions or grant response",
         title="grant",
     )
-    model_config = ConfigDict(hide_input_in_errors=True)
+    model_config = ConfigDict(
+        hide_input_in_errors=True, serialize_by_alias=True, validate_assignment=True
+    )
 
     def __getattr__(self, item: str) -> Any:
-        return getattr(self.root, item)
+        try:
+            return super().__getattr__(item)
+        except AttributeError:
+            root = self.__dict__.get("root")
+            if root is not None:
+                return getattr(root, item)
+            raise
 
 
-class GrantContinueResponse(BaseModel):
+class GrantContinueResponse(ReservedKeyMappingModel):
+    access_token: Omittable[AccessToken] = None
+    subject: Omittable[Subject] = None
+    cont: Continue = Field(
+        validation_alias=AliasChoices("continue", "cont"),
+        serialization_alias="continue",
+    )
+
+
+class AccessTokenRotationResponse(_AuthModel):
     access_token: AccessToken
-    cont: Optional[Continue] = None
-
-    model_config = ConfigDict(hide_input_in_errors=True)

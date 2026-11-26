@@ -58,7 +58,11 @@ def continuation_response():
                         "identifier": BUYER,
                     }
                 ],
-            }
+            },
+            "continue": {
+                "uri": CONTINUE_URL,
+                "access_token": {"value": "next-continuation-secret"},
+            },
         },
     )
 

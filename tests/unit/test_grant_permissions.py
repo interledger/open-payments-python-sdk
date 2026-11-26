@@ -475,7 +475,9 @@ def test_card_and_working_key_material_is_hidden_in_repr_and_retained_in_explici
         GrantResponse(
             access_token=token([outgoing]), **{"continue": grant([])["continue"]}
         ),
-        GrantContinueResponse(access_token=token([outgoing])),
+        GrantContinueResponse(
+            access_token=token([outgoing]), **{"continue": grant([])["continue"]}
+        ),
     ]
     for holder in holders:
         for sensitive in [CARD["tlvData"], CARD["pinBlock"], *PWK.values()]:

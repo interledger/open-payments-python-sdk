@@ -301,6 +301,12 @@ Access permissions keep the existing type/action enums and retain permitted JSON
 
 `AccessOutgoing.cardAuthorization` accepts `CardAuthorization` with required `tlvData` and `requestId`, optional `pinBlock`, and optional `pwk` (`PinWorkingKey` with required `key`, `kvc` and `iv`). Providing `pinBlock` requires `pwk`; a PWK may also be supplied alone. These fields require strings, without imposing additional encoding or identifier formats. Card/PWK objects reject unknown fields. Card data and working-key fields are hidden in ordinary representations and validation-error text; explicit `model_dump()` includes them for transmission or application-owned persistence.
 
+`Grant` retains its `.root` wrapper and forwards attributes such as `.cont` and `.access_token` to the selected pending or approved response. Initial responses must contain interaction instructions or an access token, with continuation metadata. Mixed initial states are rejected. Continuation responses use `GrantContinueResponse`: `continue` is required, while access-token and subject results are independently optional, including pending responses with only continuation metadata.
+
+Response models accept the wire `continue` name or legacy `cont` without changing the input dictionary; supplying both is invalid. Python attributes remain `.cont`. Dumps use the wire `continue` name by default; pass `by_alias=False` for Python field names. Permitted JSON extensions are retained. Optional known fields omit absent values and reject explicit nulls. `wait` and `expires_in` require integers, and token values require strings. Token values are hidden in ordinary representations and validation-error text but remain accessible and included in explicit dumps.
+
+`InteractRef()` serializes to an empty continuation request for polling; provide `interact_ref` after completed interaction. `AccessTokenRotationResponse` models the `{ "access_token": ... }` rotation envelope.
+
 You can use the created client to request a grant from the authorization server. In this case we will use it to request a grant for an incoming payment resource. Check the [fixtures](./tests/conftest.py) file to see the request body.
 
 ```python
