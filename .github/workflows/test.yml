@@ -59,9 +59,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Install dependencies
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install audit tools
+        run: >-
+          python -m pip install
+          "poetry==2.5.2"
+          "poetry-plugin-export==1.10.2"
+          "pip-audit==2.10.1"
+
+      - name: Check lock consistency
+        run: python -m poetry check --lock
+
+      - name: Export all locked dependency groups
         run: |
-          python3 -m pip install .  # assumes dependencies declared in pyproject.toml
-          python3 -m pip install pip-audit
-      - name: Run pip-audit
-        run: pip-audit .
+          mkdir -p "${{ runner.temp }}/open-payments-audit"
+          python -m poetry export --all-groups --format pylock.toml --output "${{ runner.temp }}/open-payments-audit/pylock.toml"
+
+      - name: Audit locked dependencies
+        run: >-
+          python -m pip_audit --locked --strict --progress-spinner off
+          "${{ runner.temp }}/open-payments-audit"
+
+      - name: Audit runtime dependency resolution
+        run: python -m pip_audit --strict --progress-spinner off .
