@@ -11,6 +11,7 @@ from open_payments_sdk.models.resource import (
     IncomingPaymentResponse,
     OutgoingPayment,
     OutgoingPaymentRequest,
+    OutgoingPaymentWithSpentAmounts,
     PaginatedIncomingPayments,
     PaginatedOutgoingPayments,
     PaymentListQuery,
@@ -103,7 +104,7 @@ class OutgoingPayments(SecurityBase):
 
     def post_create_payment(
         self, payment: OutgoingPaymentRequest, resource_server_endpoint: str, access_token: str
-    ) -> OutgoingPayment:
+    ) -> OutgoingPaymentWithSpentAmounts:
         """
         Create an Outgoing Payment Resource
         """
@@ -118,7 +119,7 @@ class OutgoingPayments(SecurityBase):
             ("content-type", "content-digest", "content-length", "authorization", *get_default_covered_components()),
         )
         response = self.http_client.send(request=request)
-        return OutgoingPayment.model_validate(response.json())
+        return OutgoingPaymentWithSpentAmounts.model_validate(response.json())
 
     def get_outgoing_payments(
         self, query: PaymentListQuery, resource_server_endpoint: str, access_token: str
@@ -137,7 +138,7 @@ class OutgoingPayments(SecurityBase):
 
     def get_outgoing_payment(
         self, payment_id: str, resource_server_endpoint: str, access_token: str
-    ) -> OutgoingPayment:
+    ) -> OutgoingPaymentWithSpentAmounts:
         """
         Get Outgoing Payment
         """
@@ -147,7 +148,7 @@ class OutgoingPayments(SecurityBase):
         request = self.http_client.build_request(method="GET", url=url, headers=req_headers)
         request = self.sign_request(request, ("authorization", *get_default_covered_components()))
         response = self.http_client.send(request=request)
-        return OutgoingPayment.model_validate(response.json())
+        return OutgoingPaymentWithSpentAmounts.model_validate(response.json())
 
 
 class Quotes(SecurityBase):
@@ -180,7 +181,7 @@ class Quotes(SecurityBase):
         """
         Get a Quote
         """
-        base_url = resource_server_endpoint.strip("/")
+        base_url = resource_server_endpoint.rstrip("/")
         url = f"{base_url}/quotes/{quote_id}"
         req_headers = {**self.get_auth_header(access_token=access_token)}
         request = self.http_client.build_request(method="GET", url=url, headers=req_headers)

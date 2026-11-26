@@ -37,7 +37,7 @@ def wallet_address_server() -> str:
     return "https://ilp.interledger-test.dev/elijahokellosalary"
 
 @pytest.fixture
-def grant() -> str:
+def grant(op_client: OpenPaymentsClient, grant_req_dto: GrantRequest) -> str:
     """
     get access token
     """

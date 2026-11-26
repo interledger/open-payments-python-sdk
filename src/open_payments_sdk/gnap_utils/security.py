@@ -2,12 +2,11 @@
 Shared class for making secure requests
 """
 
+import base64
 import hashlib
 from logging import Logger
 from typing import Sequence
-from http_message_signatures import _algorithms as algorithms
-from http_message_signatures.signatures import HTTPMessageSigner
-from http_sf import ser
+from http_message_signatures import HTTPMessageSigner, algorithms
 from httpx import Request
 from open_payments_sdk.gnap_utils.hash import HashManager
 from open_payments_sdk.gnap_utils.http_signatures import OPKeyResolver, PatchedHTTPSignatureComponentResolver
@@ -50,5 +49,6 @@ class SecurityBase:
         """
         Compute Digest
         """
-        request.headers["Content-Digest"] = ser({"sha-512": hashlib.sha512(request.content).digest()})
+        digest = hashlib.sha512(request.content).digest()
+        request.headers["Content-Digest"] = f"sha-512=:{base64.b64encode(digest).decode('ascii')}:"
         return request

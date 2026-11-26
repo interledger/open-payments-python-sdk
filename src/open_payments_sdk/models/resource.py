@@ -46,16 +46,16 @@ class PaymentListQuery(BaseModel):
         description="URL of a wallet address hosted by a Rafiki instance.",
         title="Wallet Address",
     )
-    cursor: Optional[str] = Field(min_length=1)
-    first: Optional[int] = Field(ge=1, le=100)
-    last: Optional[int] = Field(ge=1, le=100)
+    cursor: Optional[str] = Field(default=None, min_length=1)
+    first: Optional[int] = Field(default=None, ge=1, le=100)
+    last: Optional[int] = Field(default=None, ge=1, le=100)
 
 
 class Pagination(BaseModel):
     startCursor: str = Field(min_length=1)
     endCursor: str = Field(min_length=1)
     hasNextPage: Optional[bool]
-    hasPrevPage: Optional[bool]
+    hasPreviousPage: Optional[bool]
 
 ###################################################################################################
 # MODEL CORE DEFINITIONS

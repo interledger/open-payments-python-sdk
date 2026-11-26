@@ -81,6 +81,10 @@ class WalletAddress(BaseModel):
         ...,
         description="The URL of the resource server endpoint for performing Open Payments with this wallet address.",
     )
+    cardService: Optional[AnyUrl] = Field(
+        None,
+        description="The URL of the card service endpoint for this wallet address.",
+    )
     model_config = ConfigDict(
         extra="allow",
     )
