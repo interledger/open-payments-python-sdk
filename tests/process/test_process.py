@@ -1,15 +1,20 @@
 import math
+import os
 import time
-from urllib.parse import parse_qs, urlparse, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from pydantic import AnyUrl, TypeAdapter
 
-from open_payments_sdk.models.common import UriString
+from open_payments_sdk.gnap_utils.hash import verify_interaction_hash
+from open_payments_sdk.models.common import AmountValue, UriString
+from open_payments_sdk.models.resource import PaymentListQuery
 from open_payments_sdk.process.crud import OpenPaymentsProcessor
+from open_payments_sdk.process.models import PendingPayment
 
 pytestmark = [pytest.mark.live, pytest.mark.browser]
 _URI = TypeAdapter(UriString)
+_AMOUNT = TypeAdapter(AmountValue)
 
 
 def _callback_parts(value):
@@ -112,59 +117,226 @@ def interactive_payment_approval(
     raise TimeoutError("Timed out waiting for the expected interaction callback")
 
 
-def test_one_time_payment(op_seller_account, live_settings, browser_driver):
-    settings = live_settings
-    ###################################################################################################
-    # INITIATE PAYMENT
-    ###################################################################################################
-    if not settings.TEST_BUYER_WALLET or not settings.TEST_REDIRECT_URI:
-        raise ValueError("A test buyer wallet and redirect URI are required.")
-    # 1. SET UP THE ORDER
-    order = OpenPaymentsProcessor(
-        seller=op_seller_account,
-        buyer=settings.TEST_BUYER_WALLET,
-        redirect_uri=settings.TEST_REDIRECT_URI,
+def payment_amount(settings):
+    try:
+        value = getattr(settings, "TEST_PAYMENT_AMOUNT", None)
+        if value is None:
+            value = str(int(settings.TEST_PRODUCT_VALUE) * settings.TEST_PRODUCT_VOLUME)
+        value = _AMOUNT.validate_python(value)
+        if not value.lstrip("0"):
+            raise ValueError()
+        return value
+    except (ValueError, TypeError, AttributeError):
+        raise ValueError("A positive uint64 payment amount is required") from None
+
+
+def _save_payment(path, state):
+    temporary = path.with_name(path.name + ".tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        temporary.chmod(0o600)
+        handle.write(state.model_dump_json(exclude_unset=True))
+        handle.flush()
+        os.fsync(handle.fileno())
+    temporary.replace(path)
+
+
+def _claim_completion(path, state):
+    try:
+        with path.with_suffix(".claim").open("x", encoding="ascii") as handle:
+            path.with_suffix(".claim").chmod(0o600)
+            handle.write(str(state.id))
+            handle.flush()
+            os.fsync(handle.fileno())
+    except FileExistsError:
+        raise ValueError("Payment completion already claimed") from None
+
+
+def _value(amount):
+    return int(amount.value.lstrip("0") or "0")
+
+
+def _same_amount(actual, expected):
+    return (actual.assetCode, actual.assetScale, _value(actual)) == (
+        expected.assetCode,
+        expected.assetScale,
+        _value(expected),
     )
-    amount = str(int(settings.TEST_PRODUCT_VALUE) * settings.TEST_PRODUCT_VOLUME)
-    # 2. SELLER INCOMING PAYMENT PROCESS
-    incoming_payment_response = order.request_incoming_payment(amount=amount)
-    # 3. BUYER QUOTE REQUEST PROCESS
-    order.request_quote(incoming_payment_id=incoming_payment_response.id)
-    # This could be returned to the buyer for review, but we'll skip this for now...
-    # 4. REQUEST BUYER INTERACTIVE GRANT FOR PAYMENT
-    payment_redirect = order.initiate_payment(amount=amount)
-    # Could also test saving of `order.pending_payment`
-    ###################################################################################################
-    # HAND OFF FOR INTERACTIVE PAYMENT AUTHORIZATION
-    ###################################################################################################
-    response_url = interactive_payment_approval(
-        payment_redirect, browser_driver, settings, callback_uri=order.redirect_uri
+
+
+def _check_setup(state):
+    assert state.incoming_payment.walletAddress == state.recipient.id
+    assert state.quote.walletAddress == state.sender.id
+    assert state.quote.receiver == state.incoming_payment_id
+    assert _same_amount(state.quote.receiveAmount, state.incoming_amount)
+    assert (state.quote.debitAmount.assetCode, state.quote.debitAmount.assetScale) == (
+        state.sender.assetCode,
+        state.sender.assetScale,
     )
-    if not response_url:
-        raise ValueError(
-            "Something went wrong during interactive payment authorization. Check the endpoints."
+
+
+def _check_token(token, started):
+    if token.expires_in is not None and time.monotonic() - started >= token.expires_in:
+        raise TimeoutError("Access token expired during the browser payment scenario")
+
+
+def _wait_to_continue(state, grant_received):
+    wait = state.outgoing_grant.cont.wait
+    elapsed = time.monotonic() - grant_received
+    if wait is not None and elapsed < wait:
+        if wait > elapsed + 60:
+            raise TimeoutError("Continuation wait exceeds the browser test limit")
+        time.sleep(wait - elapsed)
+
+
+def _confirm_receipt(client, state, outgoing, initiated, continued, timeout=60):
+    incoming_token = state.incoming_grant.access_token
+    outgoing_token = state.continuation_response.access_token
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        _check_token(outgoing_token, continued)
+        payment = client.outgoing_payments.get(outgoing.id, outgoing_token.value)
+        assert payment.id == outgoing.id and payment.walletAddress == state.sender.id
+        assert payment.receiver == state.incoming_payment_id
+        assert _same_amount(payment.debitAmount, state.quote.debitAmount)
+        assert _same_amount(payment.receiveAmount, state.quote.receiveAmount)
+        assert not payment.failed, "Outgoing payment failed"
+        _check_token(incoming_token, initiated)
+        receipt = client.incoming_payments.get(
+            state.incoming_payment_id, incoming_token.value
         )
-    response_url = urlparse(response_url)
-    received_hash = parse_qs(response_url.query)["hash"][0]
-    interact_ref = parse_qs(response_url.query)["interact_ref"][0]
-    # key = str(response_url.path).split("/")[-1]
-    # key unneccessary here, but would normally be used to recover the specific transaction being processed
-    ###################################################################################################
-    # COMPLETE OUTGOING PAYMENT
-    ###################################################################################################
-    # 1. RECOVER THE PENDING PAYMENT FROM THE KEY
-    pending_payment = order.pending_payment
-    # Ordinarily, use `pending_payment.seller` to recover stored seller data
-    payment = OpenPaymentsProcessor(
-        seller=op_seller_account,
-        buyer=str(pending_payment.buyer.id),
+        assert (
+            receipt.id == state.incoming_payment_id
+            and receipt.walletAddress == state.recipient.id
+        )
+        assert (
+            receipt.receivedAmount.assetCode,
+            receipt.receivedAmount.assetScale,
+        ) == (state.recipient.assetCode, state.recipient.assetScale)
+        if receipt.completed and _value(receipt.receivedAmount) >= _value(
+            state.incoming_amount
+        ):
+            return payment, receipt
+        time.sleep(min(0.5, max(0, deadline - time.monotonic())))
+    raise TimeoutError("Payment receipt was not confirmed within the test deadline")
+
+
+def _check_outgoing_operations(client, state, outgoing, continued):
+    issued = state.continuation_response.access_token
+    token = issued.value
+    cursor, seen, found = None, set(), False
+    for _ in range(5):
+        _check_token(issued, continued)
+        query = PaymentListQuery(walletAddress=state.sender.id, first=100)
+        if cursor is not None:
+            query.cursor = cursor
+        page = client.outgoing_payments.list(state.sender.resourceServer, query, token)
+        assert all(payment.walletAddress == state.sender.id for payment in page.result)
+        matching = [payment for payment in page.result if payment.id == outgoing.id]
+        if matching:
+            assert all(
+                payment.receiver == state.incoming_payment_id for payment in matching
+            )
+            found = True
+            break
+        if not page.pagination.hasNextPage:
+            break
+        cursor = page.pagination.endCursor
+        assert (
+            cursor is not None and cursor not in seen
+        ), "Provider returned no usable outgoing cursor"
+        seen.add(cursor)
+    assert found, "Created outgoing payment was not found within five listing pages"
+    _check_token(issued, continued)
+    totals = client.outgoing_payments.get_grant_spent_amounts(
+        state.sender.resourceServer, token
+    )
+    if totals.spentDebitAmount is not None:
+        assert (
+            totals.spentDebitAmount.assetCode,
+            totals.spentDebitAmount.assetScale,
+        ) == (state.sender.assetCode, state.sender.assetScale)
+        assert _value(totals.spentDebitAmount) <= _value(state.quoted_amount)
+    if totals.spentReceiveAmount is not None:
+        assert (
+            totals.spentReceiveAmount.assetCode,
+            totals.spentReceiveAmount.assetScale,
+        ) == (state.recipient.assetCode, state.recipient.assetScale)
+
+
+def _cancel_confirmed_grants(client, state):
+    try:
+        client.grants.cancel(state.continue_url, state.continue_id)
+    finally:
+        try:
+            client.grants.cancel(
+                state.quote_grant.cont.uri, state.quote_grant.cont.access_token.value
+            )
+        finally:
+            client.grants.cancel(
+                state.incoming_grant.cont.uri,
+                state.incoming_grant.cont.access_token.value,
+            )
+
+
+def test_one_time_payment(op_seller_account, live_settings, browser_driver, tmp_path):
+    settings = live_settings
+    amount = payment_amount(settings)
+    if not settings.TEST_BUYER_WALLET or not settings.TEST_REDIRECT_URI:
+        pytest.skip("A sender wallet and callback URI are required")
+    saved = tmp_path / "pending-payment.json"
+    if saved.exists() or saved.with_suffix(".claim").exists():
+        raise ValueError(
+            "Saved payment state already exists; reconcile it before starting again"
+        )
+    with OpenPaymentsProcessor(
+        recipient=op_seller_account,
+        sender=settings.TEST_BUYER_WALLET,
         redirect_uri=settings.TEST_REDIRECT_URI,
+    ) as processor:
+        initiated = time.monotonic()
+        try:
+            redirect = processor.initiate_payment(amount=amount)
+            grant_received = time.monotonic()
+            callback_uri = processor.redirect_uri
+            _check_setup(processor.pending_payment)
+        finally:
+            _save_payment(saved, processor.pending_payment)
+
+    response_url = interactive_payment_approval(
+        redirect, browser_driver, settings, callback_uri=callback_uri
     )
-    # 5. COMPLETE OUTGOING PAYMENT
-    # This depends on the app ... can divide up payments between collaborators, take platform fees, etc.
-    # Not fully tested here, yet
-    incoming_payment_response = payment.complete_payment(
-        interact_ref=str(interact_ref),
-        received_hash=str(received_hash),
-        pending_payment=pending_payment,
-    )
+    callback = interaction_callback(response_url, callback_uri)
+    if callback is None:
+        raise ValueError("Interaction did not return the expected payment callback")
+    interact_ref, received_hash = callback
+    state = PendingPayment.model_validate_json(saved.read_text(encoding="utf-8"))
+    if not verify_interaction_hash(
+        client_nonce=state.client_nonce,
+        server_nonce=state.finish_id,
+        interact_ref=interact_ref,
+        grant_endpoint=state.grant_endpoint,
+        received_hash=received_hash,
+    ):
+        raise ValueError("Invalid interaction callback")
+    _wait_to_continue(state, grant_received)
+    _check_token(state.incoming_grant.access_token, initiated)
+    with OpenPaymentsProcessor(
+        recipient=op_seller_account,
+        sender=str(state.sender.id),
+        redirect_uri=settings.TEST_REDIRECT_URI,
+        pending_payment=state,
+    ) as resumed:
+        _claim_completion(saved, state)
+        confirmed = False
+        continued = time.monotonic()
+        try:
+            outgoing = resumed.complete_payment(interact_ref, received_hash, state)
+            _confirm_receipt(resumed.client, state, outgoing, initiated, continued)
+            confirmed = True
+            _check_outgoing_operations(resumed.client, state, outgoing, continued)
+        finally:
+            try:
+                _save_payment(saved, state)
+            finally:
+                if confirmed:
+                    _cancel_confirmed_grants(resumed.client, state)

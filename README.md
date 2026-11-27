@@ -68,12 +68,16 @@ poetry install --with live
 poetry run python -m pytest tests/integration --run-live -ra
 ```
 
-Browser workflows additionally require Chrome, browser tooling, and configured buyer credentials:
+Browser workflows additionally require Chrome, browser tooling, and configured sender login credentials. They authorize and send a payment between the configured test wallets. Set `TEST_PAYMENT_AMOUNT` to a positive uint64 string in the recipient asset's smallest units. Existing configurations without it still use `TEST_PRODUCT_VALUE * TEST_PRODUCT_VOLUME`.
 
 ```bash
 poetry install --with live,browser
 poetry run python -m pytest tests/process --run-live --run-browser -ra
 ```
+
+The configured `TEST_REDIRECT_URI` must be served by your test application. The browser scenario initiates once, saves `pending-payment.json` in its pytest temporary directory, closes the first processor, reloads the original state and claims completion before continuing the grant. The callback must match the saved transaction URI and hash context. It respects the continuation wait, stopping with saved state if more than another 60 seconds is needed. It then creates one outgoing payment and uses read-only polling for up to 60 seconds, subject to request timeouts and token expiry, to confirm receipt at the recipient. Sender fees may make sent and debit amounts differ. It also reads/lists the outgoing payment and checks the current grant's spent amounts. The login/consent selectors follow the contributed Rafiki UI; other provider interfaces may need an adapter and have not been verified here.
+
+On confirmed receipt, the scenario cancels its three grants using their latest known continuation credentials. Partial state and an exclusive local completion claim remain available on failure; no payment write is retried and uncertain outcomes do not trigger grant cancellation. Reconcile the saved transaction with the provider before starting another attempt. The local files are test records, not a replacement for the application's durable transaction store.
 
 Tests with missing optional dependencies or configuration report skips. Incoming-payment tests request a grant and create an unfunded resource for each create/get/list/complete scenario, using the configured wallet's assets and an expiry ten minutes ahead. Listing searches at most five pages of 100 payments. Grants are cancelled during teardown, including when a provider requires interaction; such interactive incoming grants report a skip. These tests create provider records but do not send funds.
 

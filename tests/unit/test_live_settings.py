@@ -89,3 +89,16 @@ def test_other_validation_errors_also_omit_raw_input():
     with pytest.raises(ValidationError) as caught:
         Settings(TEST_PRODUCT_VOLUME=value)
     assert value not in str(caught.value) + repr(caught.value)
+
+
+@pytest.mark.parametrize("value", ["0", "1000", "0001000", "18446744073709551615"])
+def test_payment_amount_setting_uses_the_shared_amount_string_contract(value):
+    assert Settings(TEST_PAYMENT_AMOUNT=value).TEST_PAYMENT_AMOUNT == value
+
+
+@pytest.mark.parametrize(
+    "value", [True, 1, "-1", "1.5", "\u0661", "18446744073709551616", ""]
+)
+def test_payment_amount_setting_rejects_non_protocol_values(value):
+    with pytest.raises(ValidationError):
+        Settings(TEST_PAYMENT_AMOUNT=value)

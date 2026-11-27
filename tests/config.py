@@ -4,6 +4,8 @@ from typing import Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from open_payments_sdk.models.common import AmountValue
+
 
 class Settings(BaseSettings):
     TEST_SELLER_WALLET: Optional[str] = Field(default="")
@@ -12,6 +14,7 @@ class Settings(BaseSettings):
     TEST_BUYER_WALLET: Optional[str] = Field(default="")
     TEST_BUYER_LOGIN: Optional[str] = Field(default="")
     TEST_BUYER_PASSWORD: Optional[str] = Field(default="", repr=False)
+    TEST_PAYMENT_AMOUNT: Optional[AmountValue] = Field(default=None)
     TEST_PRODUCT_VALUE: str = Field(default="2500")
     TEST_PRODUCT_VOLUME: int = Field(default=2)
     TEST_REDIRECT_URI: str = Field(default="http://localhost/redirect/")
