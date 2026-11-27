@@ -79,6 +79,8 @@ Tests with missing optional dependencies or configuration report skips. Incoming
 
 Grant tests accept approved or pending initial responses and cancel the returned grant. The interaction test requests read-only outgoing access with redirect interaction and checks its initial response without opening a browser. Token management requires a non-interactive issued token: it rotates that token and revokes the replacement at its returned management URI, then cancels the grant. If interaction is required, that case skips after cleanup. These grant tests create no outgoing payment.
 
+Quote create/read tests additionally require the sender's `TEST_BUYER_WALLET`. They create an unfunded incoming payment for the recipient, request a quote for its receive amount, check both wallets' assets and read the full returned quote URL. Both grants are cancelled after the scenario, including after failure or a pending-grant skip. They create no outgoing payment and need no browser login.
+
 The peer-to-peer example uses `poetry install --with examples`. Optional notebook tooling requires Python 3.11.5 or newer so it can use patched dependencies:
 
 ```bash

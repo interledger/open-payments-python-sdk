@@ -16,6 +16,13 @@ def wallet_address_server(live_settings):
 
 
 @pytest.fixture
+def sender_wallet_address(live_settings):
+    if not live_settings.TEST_BUYER_WALLET:
+        pytest.skip("Live sender wallet configuration missing: TEST_BUYER_WALLET")
+    return live_settings.TEST_BUYER_WALLET
+
+
+@pytest.fixture
 def wallet_client():
     with HttpClient(http_timeout=10.0) as transport:
         yield Wallet(transport)
