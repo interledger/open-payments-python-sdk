@@ -55,13 +55,16 @@ jobs:
       - name: Run offline tests
         run: python -m poetry run python -m pytest -ra
 
-      - name: Install example test dependencies
+      - name: Install optional test dependencies
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        run: python -m poetry install --with examples --no-interaction
+        run: python -m poetry install --with examples,live --no-interaction
 
-      - name: Test callback server
+      - name: Test optional components offline
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        run: python -m poetry run python -m pytest tests/unit/test_example_consent.py::TestCallbackServer -ra
+        run: >-
+          python -m poetry run python -m pytest
+          tests/unit/test_example_consent.py::TestCallbackServer
+          tests/unit/test_live_settings.py -ra
 
   audit:
     runs-on: ubuntu-latest
