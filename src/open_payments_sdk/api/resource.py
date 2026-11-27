@@ -5,7 +5,12 @@ Resource Server Module
 from logging import Logger, LoggerAdapter
 from open_payments_sdk.errors import _sdk_operation
 from open_payments_sdk.gnap_utils.security import SecurityBase
-from open_payments_sdk.http import HttpClient, HttpClientProtocol, _execute_request
+from open_payments_sdk.http import (
+    HttpClient,
+    HttpClientProtocol,
+    _execute_request,
+    _public_get,
+)
 from open_payments_sdk.models.resource import (
     IncomingPayment,
     IncomingPaymentRequest,
@@ -15,9 +20,34 @@ from open_payments_sdk.models.resource import (
     PaginatedIncomingPayments,
     PaginatedOutgoingPayments,
     PaymentListQuery,
+    PublicIncomingPayment,
     Quote,
     QuoteRequest,
 )
+from open_payments_sdk.utils.urls import UrlInput, validate_request_url
+
+
+def _get_public_incoming_payment(
+    http_client: HttpClientProtocol, url: UrlInput
+) -> PublicIncomingPayment:
+    return _public_get(http_client, validate_request_url(url), PublicIncomingPayment)
+
+
+class PublicIncomingPayments:
+    """Unsigned incoming-payment discovery without signing credentials."""
+
+    def __init__(self, http_client: HttpClient | HttpClientProtocol):
+        self.http_client = http_client
+
+    @_sdk_operation("incoming_payments.get_public")
+    def get(self, url: UrlInput) -> PublicIncomingPayment:
+        """Read public payment details from the complete returned resource URL."""
+        return _get_public_incoming_payment(self.http_client, url)
+
+    @_sdk_operation("incoming_payments.get_public")
+    def get_public(self, url: UrlInput) -> PublicIncomingPayment:
+        """Explicit public-read alias, also available on authenticated resources."""
+        return self.get(url)
 
 
 class IncomingPayments(SecurityBase):
@@ -34,6 +64,11 @@ class IncomingPayments(SecurityBase):
     ):
         super().__init__(keyid=keyid, private_key=private_key, logger=logger)
         self.http_client = http_client
+
+    @_sdk_operation("incoming_payments.get_public")
+    def get_public(self, url: UrlInput) -> PublicIncomingPayment:
+        """Read public details without a token or signature on this client."""
+        return _get_public_incoming_payment(self.http_client, url)
 
     @_sdk_operation("incoming_payments.create")
     def post_create_payment(

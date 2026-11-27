@@ -10,7 +10,12 @@ import httpx
 
 from open_payments_sdk import configuration
 from open_payments_sdk.api.auth import AccessTokens, Grants
-from open_payments_sdk.api.resource import IncomingPayments, OutgoingPayments, Quotes
+from open_payments_sdk.api.resource import (
+    IncomingPayments,
+    OutgoingPayments,
+    PublicIncomingPayments,
+    Quotes,
+)
 from open_payments_sdk.api.wallet import Wallet
 from open_payments_sdk.errors import ConfigurationError, _sdk_operation
 from open_payments_sdk.http import HttpClient, HttpClientProtocol, _ClientSession
@@ -142,6 +147,10 @@ class UnauthenticatedClient(_ClientBase):
             self._session._check_open()
             self.wallet = Wallet(self._session)
             self.wallet_address = self.wallet
+            self.incoming_payments = PublicIncomingPayments(self._session)
         except BaseException:
             self._session.close()
             raise
+
+
+AuthenticatedClient = OpenPaymentsClient

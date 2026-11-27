@@ -202,23 +202,38 @@ assert validate_request_url("http://localhost:3000/alice") == "http://localhost:
 
 `WalletAddress` metadata requires `id`, `assetCode`, `assetScale`, `authServer` and `resourceServer`. `publicName` is an optional string, including an empty string; omission leaves the attribute as `None` and omits it from serialization, while an explicit null is invalid. URI fields validate complete RFC3986 syntax and keep their existing `AnyUrl` attribute types and normalization. These data fields follow the pinned schema's URI contract; request URL helpers use a separate HTTP(S) policy. Provider extensions accept finite JSON values and retain nested nulls. The optional `cardService` extension identifies a card-service endpoint. It is supported by the SDK but is not a defined property in the pinned Open Payments v1.5.1 wallet schema. It remains a nullable URI with its existing `None` default and serialization behavior.
 
-## Public wallet discovery
+## Public discovery
 
-Use `UnauthenticatedClient` to read wallet metadata and public keys without a private key, wallet identity or access token. Construction performs no requests or key generation:
+Use `UnauthenticatedClient` to read wallet metadata, public keys and public incoming payments without a private key, wallet identity or access token. Construction performs no requests or key generation:
 
 ```python
-from open_payments_sdk.client.client import UnauthenticatedClient
+from open_payments_sdk import UnauthenticatedClient
 
 with UnauthenticatedClient() as client:
     wallet = client.wallet.get("$wallet.example/alice")
     keys = client.wallet.get_keys(wallet.id)
 ```
 
-Both operations accept HTTP(S) URLs, payment pointers and the existing bare host/path form. `wallet.get_wallet_address(wallet_address_server_endpoint=...)` remains available, and `client.wallet_address` is an alias of `client.wallet` on both client types. Authenticated clients use the same unsigned discovery operations. `get_keys` appends `/jwks.json` to the wallet path before any query string, preserving path prefixes and opaque query data; it does not first fetch the wallet metadata.
+For an incoming payment, pass the complete resource URL returned by the provider:
 
-Public wallet reads follow at most five redirects with status 301, 302, 303, 307 or 308. Every redirect target must be HTTPS, including redirects from an HTTP development endpoint. Relative `Location` references resolve against the current request URL; malformed targets, credentials, fragments, loops and excess redirects raise `ResponseError`. An origin change drops custom headers; subsequent hops retain only `Host`, `Accept` and `User-Agent`, even if they return to the original origin. Same-origin redirects retain configured headers. No authorization, cookies or signing headers are added to these reads. Redirect state is local to each call; no permanent redirect cache is maintained.
+```python
+from open_payments_sdk import UnauthenticatedClient
+
+with UnauthenticatedClient() as client:
+    incoming = client.incoming_payments.get(
+        "https://resource.example/tenant/incoming-payments/opaque-id"
+    )
+```
+
+Public incoming reads return `PublicIncomingPayment` with the required `authServer` and `methods`; `walletAddress` is not required. Resource URLs must be absolute HTTP(S) URLs, including any path prefix and opaque query data. Payment pointers and bare host/path forms are for wallet discovery. Both client types expose `client.incoming_payments.get_public(url)`; the public client also offers the shorter `get(url)`. Authenticated clients retain their signed `get_incoming_payment(...)` method. Public reads use no access token or signature and do not fall back to a signed request.
+
+Wallet metadata and JWKS operations accept HTTP(S) URLs, payment pointers and the existing bare host/path form. `wallet.get_wallet_address(wallet_address_server_endpoint=...)` remains available, and `client.wallet_address` is an alias of `client.wallet` on both client types. Authenticated clients use the same unsigned discovery operations. `get_keys` appends `/jwks.json` to the wallet path before any query string, preserving path prefixes and opaque query data; it does not first fetch the wallet metadata.
+
+Public discovery reads follow at most five redirects with status 301, 302, 303, 307 or 308. Every redirect target must be HTTPS, including redirects from an HTTP development endpoint. Relative `Location` references resolve against the current request URL; malformed targets, credentials, fragments, loops and excess redirects raise `ResponseError`. An origin change drops custom headers; subsequent hops retain only `Host`, `Accept` and `User-Agent`, even if they return to the original origin. Same-origin redirects retain configured headers. No authorization, cookies or signing headers are added to these reads. Redirect state is local to each call; no permanent redirect cache is maintained.
 
 The public client uses the same configuration, injectable transports, timeout snapshots, quiet logger and ownership/close rules described below. Caller-owned event hooks and custom transports control their own behavior.
+
+Package-level imports expose `OpenPaymentsClient`, its `AuthenticatedClient` alias, `UnauthenticatedClient`, `Configuration`, `HttpClient`, `HttpClientProtocol`, SDK error types and the URL/pointer helpers alongside the existing cryptography helpers. Client classes are also available from `open_payments_sdk.client`; existing imports from `open_payments_sdk.client.client` and other implementation modules remain valid. Response and request models stay available from their existing `open_payments_sdk.models` modules.
 
 ## Client configuration and lifecycle
 
@@ -270,7 +285,7 @@ For an existing native HTTPX client, use `HttpClient(http_timeout=10.0, client=n
 
 `http_timeout` accepts a finite nonnegative number of seconds, `None` to disable timeouts, or an `httpx.Timeout` with separate connect/read/write/pool values. The timeout is captured in each prepared request. A manually supplied HTTPX request retains an explicit timeout extension; otherwise the wrapper supplies its current timeout. See [HTTPX timeout options](https://www.python-httpx.org/advanced/timeouts/).
 
-SDK requests use their prepared URL, body and headers without merging native-client default headers, query parameters, cookies or authentication. Transport dispatch disables native redirects and uses no additional authentication flow, preserving per-call GNAP credentials and signatures even when the borrowed client has different defaults. Public wallet reads handle the bounded HTTPS redirects described above through fresh unsigned requests. Signed operations return a response error for redirects and are never automatically replayed. The SDK adds no retries. Injected event hooks and custom transports remain caller-configured behavior and must preserve signed request bytes and avoid replaying payments.
+SDK requests use their prepared URL, body and headers without merging native-client default headers, query parameters, cookies or authentication. Transport dispatch disables native redirects and uses no additional authentication flow, preserving per-call GNAP credentials and signatures even when the borrowed client has different defaults. Public discovery reads handle the bounded HTTPS redirects described above through fresh unsigned requests. Signed operations return a response error for redirects and are never automatically replayed. The SDK adds no retries. Injected event hooks and custom transports remain caller-configured behavior and must preserve signed request bytes and avoid replaying payments.
 
 All synchronous wallet, grant, token and payment methods share one request pipeline. Each supplied body/query model is exported once with its existing aliases and omission rules, then HTTPX prepares the final URL and JSON bytes. The SDK calculates the content digest and signs that prepared request before sending it to the shared response handler. Tokens remain call-local and covered request data is preserved during dispatch.
 
