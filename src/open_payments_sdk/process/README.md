@@ -41,11 +41,36 @@ Before continuing a grant or creating an outgoing payment, validate the callback
 
 Only then should you consider the transaction successfully completed.
 
+### Sender and recipient names
+
+Use `OpenPaymentAccount` for signing-account configuration and `PendingPayment` for saved workflow state:
+
+```python
+from open_payments_sdk.process.crud import OpenPaymentsProcessor
+from open_payments_sdk.process.models import OpenPaymentAccount
+
+account = OpenPaymentAccount(
+    walletAddressUrl=recipient_wallet_address,
+    privateKey=private_key_pem,
+    keyId=key_id,
+)
+processor = OpenPaymentsProcessor(
+    recipient=account,
+    sender=sender_wallet_address,
+    redirect_uri=callback_prefix,
+    http_client=http_client,
+)
+```
+
+The processor exposes `sender`, `recipient`, `sender_wallet` and `recipient_wallet`. Its pending state accepts `sender` and `recipient` when constructed and exposes those attributes. The specified resource field `receiver` still identifies an incoming-payment resource.
+
+`SellerOpenPaymentAccount` and `PendingIncomingPaymentTransaction` remain exact aliases for the new class names. Existing `buyer`/`seller` constructor arguments, processor attributes and state attributes remain supported, referring to the same values. Supply one name for each actor; competing constructor arguments or duplicate actor keys in saved input are rejected. Default state dumps keep the existing `buyer` and `seller` keys, so existing serialized records remain readable without migration.
+
 ### Stored consent and completion attempts
 
 `initiate_payment(amount=...)` creates the incoming payment and quote, requests an outgoing payment grant, and returns its interaction redirect URI. It generates a fresh unpredictable `client_nonce` and records the exact `grant_endpoint` used for initiation. These values, the server's `finish_id`, continuation credentials and payment/quote references are part of `pending_payment`. Persist that model before handing the redirect to the sender. Its serialized data contains credentials and must be kept in your protected transaction store.
 
-The existing `get_purchase_endpoint(amount=...)` name remains a compatibility alias for `initiate_payment`. Both names use the same state and initiation guard. The existing `buyer` and `seller` actor names refer to the sender and recipient respectively; existing constructor arguments and saved-state fields remain supported.
+The existing `get_purchase_endpoint(amount=...)` name remains a compatibility alias for `initiate_payment`. Both names use the same state and initiation guard.
 
 The claimed initiation records `incoming_amount` from the validated request using the recipient's assets. As each stage succeeds, it snapshots the full `incoming_payment`, `quote` and `outgoing_grant` responses, retaining their resource IDs and setting `quoted_amount` to the sender's quoted debit amount. Sending and receiving assets remain independent. Quote expiry strings and grant continuation waits are preserved for application decisions. Persist partial state when initiation raises; a missing response does not establish that the provider created no resource, and the same transaction cannot be restarted implicitly.
 

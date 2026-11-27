@@ -1,5 +1,14 @@
+from collections.abc import Mapping
 from typing import Optional
-from pydantic import BaseModel, ConfigDict, Field, field_validator, AnyUrl
+from pydantic import (
+    AliasChoices,
+    AnyUrl,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 from ulid import ULID
 
 from ...models.auth import Grant, GrantContinueResponse
@@ -13,7 +22,7 @@ from ...models.resource import (
 from ...utils.parser import paymentsparser
 
 
-class PendingIncomingPaymentTransaction(BaseModel):
+class PendingPayment(BaseModel):
     """
     Stored context for recovering a one-off Open Payments flow.
     """
@@ -21,22 +30,24 @@ class PendingIncomingPaymentTransaction(BaseModel):
     id: ULID = Field(..., description="Tracking key needed to recover the transaction.")
     buyer: WalletAddress = Field(
         ...,
+        validation_alias=AliasChoices("sender", "buyer"),
         description="Data for the sender's Open Payments wallet",
     )
     seller: WalletAddress = Field(
         ...,
+        validation_alias=AliasChoices("recipient", "seller"),
         description="Data for the recipient's Open Payments wallet",
     )
     incoming_payment_id: Optional[AnyUrl] = Field(
         None,
-        description="URL reference to incoming payment generated during initial grant to seller.",
+        description="URL reference to the recipient's incoming payment.",
     )
     incoming_amount: Optional[Amount] = Field(
         None, description="Amount requested, including currency code."
     )
     quote_id: Optional[AnyUrl] = Field(
         None,
-        description="URL reference to quote generated during initial grant to buyer.",
+        description="URL reference to the sender's quote.",
     )
     quoted_amount: Optional[Amount] = Field(
         None, description="Amount quoted, including currency code."
@@ -109,6 +120,31 @@ class PendingIncomingPaymentTransaction(BaseModel):
 
     model_config = ConfigDict(hide_input_in_errors=True)
 
+    @model_validator(mode="before")
+    @classmethod
+    def distinct_actor_names(cls, value):
+        if isinstance(value, Mapping):
+            for canonical, original in (("sender", "buyer"), ("recipient", "seller")):
+                if canonical in value and original in value:
+                    raise ValueError(f"Supply only one of {canonical} and {original}")
+        return value
+
+    @property
+    def sender(self) -> WalletAddress:
+        return self.buyer
+
+    @sender.setter
+    def sender(self, value: WalletAddress) -> None:
+        self.buyer = value
+
+    @property
+    def recipient(self) -> WalletAddress:
+        return self.seller
+
+    @recipient.setter
+    def recipient(self, value: WalletAddress) -> None:
+        self.seller = value
+
     @field_validator("buyer", "seller", mode="before")
     @classmethod
     def evaluate_wallet_address(cls, value):
@@ -117,7 +153,7 @@ class PendingIncomingPaymentTransaction(BaseModel):
         return value
 
 
-class SellerOpenPaymentAccount(BaseModel):
+class OpenPaymentAccount(BaseModel):
     """
     Normalize the recipient's signing-account configuration.
     """
@@ -151,3 +187,8 @@ class SellerOpenPaymentAccount(BaseModel):
     def evaluate_private_key(cls, privateKey):
         privateKey = paymentsparser.convert_private_key_to_PEM(private_key=privateKey)
         return privateKey
+
+
+# Existing imports and isinstance checks keep the exact same class objects.
+PendingIncomingPaymentTransaction = PendingPayment
+SellerOpenPaymentAccount = OpenPaymentAccount

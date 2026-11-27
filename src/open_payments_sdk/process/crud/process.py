@@ -8,6 +8,7 @@ from ...http import HttpClient
 from ...client.client import OpenPaymentsClient
 from ...api.auth import GrantRequest, Grant, InteractRef
 from ...models.auth import GrantResponse, InteractionInstructionsResponse
+from ...models.wallet import WalletAddress
 from ...models.resource import (
     IncomingPaymentRequest,
     OutgoingPaymentRequest,
@@ -16,7 +17,7 @@ from ...models.resource import (
     QuoteRequest,
 )
 from ...utils.parser import paymentsparser
-from ..models.process import SellerOpenPaymentAccount, PendingIncomingPaymentTransaction
+from ..models.process import OpenPaymentAccount, PendingPayment
 
 _transaction_lock = Lock()
 
@@ -44,30 +45,78 @@ class OpenPaymentsProcessor:
     def __init__(
         self,
         *,
-        seller: SellerOpenPaymentAccount,
-        buyer: str,
+        recipient: OpenPaymentAccount | None = None,
+        sender: str | None = None,
         http_client: HttpClient | None = None,
         redirect_uri: str,
+        seller: OpenPaymentAccount | None = None,
+        buyer: str | None = None,
     ) -> None:
+        if recipient is not None and seller is not None:
+            raise ValueError("Supply only one of recipient and seller")
+        if sender is not None and buyer is not None:
+            raise ValueError("Supply only one of sender and buyer")
+        recipient = recipient if recipient is not None else seller
+        sender = sender if sender is not None else buyer
+        if not isinstance(recipient, OpenPaymentAccount):
+            raise ValueError("A recipient signing account is required")
+        if sender is None:
+            raise ValueError("A sender wallet address is required")
         if not http_client:
             http_client = HttpClient(http_timeout=10.0)
         self.http_client = http_client
-        self.seller = seller
-        self.buyer = paymentsparser.normalise_wallet_address(wallet_address=buyer)
+        self.recipient = recipient
+        self.sender = paymentsparser.normalise_wallet_address(wallet_address=sender)
         self.client = OpenPaymentsClient(
-            keyid=self.seller.keyId,
-            private_key=self.seller.privateKey,
-            client_wallet_address=self.seller.walletAddressUrl,
+            keyid=self.recipient.keyId,
+            private_key=self.recipient.privateKey,
+            client_wallet_address=self.recipient.walletAddressUrl,
             http_client=self.http_client,
         )
-        self.seller_wallet = self.client.wallet.get_wallet_address(
-            self.seller.walletAddressUrl
+        self.recipient_wallet = self.client.wallet.get_wallet_address(
+            self.recipient.walletAddressUrl
         )
-        self.buyer_wallet = self.client.wallet.get_wallet_address(self.buyer)
-        self.pending_payment = PendingIncomingPaymentTransaction(
-            **{"id": ULID(), "seller": self.seller_wallet, "buyer": self.buyer_wallet}
+        self.sender_wallet = self.client.wallet.get_wallet_address(self.sender)
+        self.pending_payment = PendingPayment(
+            id=ULID(), recipient=self.recipient_wallet, sender=self.sender_wallet
         )
         self.redirect_uri = f"{redirect_uri}{self.pending_payment.id}"
+
+    @property
+    def seller(self) -> OpenPaymentAccount:
+        """Compatibility view of the recipient signing account."""
+        return self.recipient
+
+    @seller.setter
+    def seller(self, value: OpenPaymentAccount) -> None:
+        self.recipient = value
+
+    @property
+    def buyer(self) -> str:
+        """Compatibility view of the sender wallet address."""
+        return self.sender
+
+    @buyer.setter
+    def buyer(self, value: str) -> None:
+        self.sender = value
+
+    @property
+    def seller_wallet(self) -> WalletAddress:
+        """Compatibility view of the recipient wallet metadata."""
+        return self.recipient_wallet
+
+    @seller_wallet.setter
+    def seller_wallet(self, value: WalletAddress) -> None:
+        self.recipient_wallet = value
+
+    @property
+    def buyer_wallet(self) -> WalletAddress:
+        """Compatibility view of the sender wallet metadata."""
+        return self.sender_wallet
+
+    @buyer_wallet.setter
+    def buyer_wallet(self, value: WalletAddress) -> None:
+        self.sender_wallet = value
 
     ###################################################################################################
     # 1. GRANT-MAKING GENERAL UTILITY
@@ -86,7 +135,7 @@ class OpenPaymentsProcessor:
                         }
                     ]
                 },
-                "client": str(self.seller_wallet.id),
+                "client": str(self.recipient_wallet.id),
             }
         )
         return self.client.grants.post_grant_request(
@@ -102,11 +151,11 @@ class OpenPaymentsProcessor:
         if isinstance(amount, int) and not isinstance(amount, bool):
             amount = str(amount)
         return IncomingPaymentRequest(
-            walletAddress=str(self.seller_wallet.id),
+            walletAddress=str(self.recipient_wallet.id),
             incomingAmount={
                 "value": amount,
-                "assetCode": self.seller_wallet.assetCode,
-                "assetScale": self.seller_wallet.assetScale,
+                "assetCode": self.recipient_wallet.assetCode,
+                "assetScale": self.recipient_wallet.assetScale,
             },
         )
 
@@ -116,14 +165,14 @@ class OpenPaymentsProcessor:
         grant = self.request_grant(
             grant="incoming-payment",
             actions=["create", "read", "read-all", "complete", "list"],
-            endpoint=self.seller_wallet.authServer,
+            endpoint=self.recipient_wallet.authServer,
         )
         self.pending_payment.incoming_grant = grant.model_copy(deep=True)
         if not isinstance(grant.root, GrantResponse):
             raise ValueError("Incoming payment grant has not issued an access token")
         return self.client.incoming_payments.post_create_payment(
             payment=payment,
-            resource_server_endpoint=str(self.seller_wallet.resourceServer),
+            resource_server_endpoint=str(self.recipient_wallet.resourceServer),
             access_token=grant.access_token.value,
         )
 
@@ -135,7 +184,7 @@ class OpenPaymentsProcessor:
         """Request a quote from the sender's resource server."""
         quote = QuoteRequest(
             **{
-                "walletAddress": self.buyer_wallet.id,
+                "walletAddress": self.sender_wallet.id,
                 "receiver": str(incoming_payment_id),
                 "method": "ilp",
             }
@@ -143,14 +192,14 @@ class OpenPaymentsProcessor:
         grant = self.request_grant(
             grant="quote",
             actions=["create", "read", "read-all"],
-            endpoint=self.buyer_wallet.authServer,
+            endpoint=self.sender_wallet.authServer,
         )
         self.pending_payment.quote_grant = grant.model_copy(deep=True)
         if not isinstance(grant.root, GrantResponse):
             raise ValueError("Quote grant has not issued an access token")
         return self.client.quotes.post_create_quote(
             quote=quote,
-            resource_server_endpoint=str(self.buyer_wallet.resourceServer),
+            resource_server_endpoint=str(self.sender_wallet.resourceServer),
             access_token=grant.access_token.value,
         )
 
@@ -174,7 +223,7 @@ class OpenPaymentsProcessor:
                     "Payment initiation already started for this transaction"
                 )
             self.pending_payment.client_nonce = secrets.token_urlsafe(32)
-            self.pending_payment.grant_endpoint = str(self.buyer_wallet.authServer)
+            self.pending_payment.grant_endpoint = str(self.sender_wallet.authServer)
             self.pending_payment.incoming_amount = (
                 payment_request.incomingAmount.model_copy(deep=True)
             )
@@ -200,7 +249,7 @@ class OpenPaymentsProcessor:
                 "access_token": {
                     "access": [
                         {
-                            "identifier": str(self.buyer_wallet.id),
+                            "identifier": str(self.sender_wallet.id),
                             "type": "outgoing-payment",
                             "actions": [
                                 "create",
@@ -219,7 +268,7 @@ class OpenPaymentsProcessor:
                         },
                     ],
                 },
-                "client": str(self.seller_wallet.id),
+                "client": str(self.recipient_wallet.id),
                 "interact": {
                     "start": ["redirect"],
                     "finish": {
@@ -260,13 +309,13 @@ class OpenPaymentsProcessor:
         self,
         interact_ref: str,
         received_hash: str,
-        pending_payment: PendingIncomingPaymentTransaction,
+        pending_payment: PendingPayment,
     ) -> OutgoingPayment:
         """
         Verify the sender's interaction callback against stored payment state,
         continue the grant and create the outgoing payment.
         """
-        if not isinstance(pending_payment, PendingIncomingPaymentTransaction):
+        if not isinstance(pending_payment, PendingPayment):
             raise ValueError("A stored pending payment transaction is required")
         required = (
             "client_nonce",
@@ -306,8 +355,8 @@ class OpenPaymentsProcessor:
         ):
             raise ValueError("Stored continue_url must be an HTTP(S) request URL")
         if (
-            pending_payment.seller.id != self.seller_wallet.id
-            or pending_payment.buyer.id != self.buyer_wallet.id
+            pending_payment.recipient.id != self.recipient_wallet.id
+            or pending_payment.sender.id != self.sender_wallet.id
         ):
             raise ValueError("Stored payment state does not match processor wallets")
         # First validate the interactive response hash
@@ -320,7 +369,7 @@ class OpenPaymentsProcessor:
         ):
             raise ValueError("Invalid interaction callback")
         outgoing_payment_request = OutgoingPaymentRequest(
-            walletAddress=str(pending_payment.buyer.id),
+            walletAddress=str(pending_payment.sender.id),
             quoteId=pending_payment.quote_id,
             metadata={},
         )
@@ -351,8 +400,13 @@ class OpenPaymentsProcessor:
         # Create the outgoing payment from the sender's wallet
         payment = self.client.outgoing_payments.post_create_payment(
             payment=outgoing_payment_request,
-            resource_server_endpoint=str(pending_payment.buyer.resourceServer),
+            resource_server_endpoint=str(pending_payment.sender.resourceServer),
             access_token=access_token,
         )
         pending_payment.outgoing_payment = payment.model_copy(deep=True)
         return payment
+
+
+# Preserve class imports that the original processor module made available.
+SellerOpenPaymentAccount = OpenPaymentAccount
+PendingIncomingPaymentTransaction = PendingPayment
