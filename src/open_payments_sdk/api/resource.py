@@ -17,6 +17,7 @@ from open_payments_sdk.models.resource import (
     IncomingPayment,
     IncomingPaymentRequest,
     IncomingPaymentResponse,
+    OutgoingPayment,
     OutgoingPaymentRequest,
     OutgoingPaymentWithSpentAmounts,
     PaginatedIncomingPayments,
@@ -29,6 +30,7 @@ from open_payments_sdk.models.resource import (
 from open_payments_sdk.utils.urls import UrlInput, validate_request_url
 
 _IncomingPaymentType = TypeVar("_IncomingPaymentType", bound=IncomingPayment)
+_OutgoingPaymentType = TypeVar("_OutgoingPaymentType", bound=OutgoingPayment)
 
 
 def _append_url_path(
@@ -48,6 +50,7 @@ def _validate_incoming_payment(
     url: str,
     status: int,
     state: Literal["created", "completed"] | None = None,
+    location_prefix: tuple[str | int, ...] = (),
 ) -> _IncomingPaymentType:
     """Apply operation semantics without narrowing reusable protocol models."""
     issues = []
@@ -75,7 +78,45 @@ def _validate_incoming_payment(
             url=url,
             status=status,
             reason="validation",
-            validation_errors=tuple(issues),
+            validation_errors=tuple(
+                ValidationIssue(location_prefix + issue.location, issue.type)
+                for issue in issues
+            ),
+        )
+    return payment
+
+
+def _validate_outgoing_payment(
+    payment: _OutgoingPaymentType,
+    *,
+    method: str,
+    url: str,
+    status: int,
+    location_prefix: tuple[str | int, ...] = (),
+) -> _OutgoingPaymentType:
+    """Check sending assets, amount bounds and failure state on parsed data."""
+    issues = []
+    for field in ("assetCode", "assetScale"):
+        if getattr(payment.sentAmount, field) != getattr(payment.debitAmount, field):
+            issues.append(ValidationIssue(("sentAmount", field), "asset_mismatch"))
+    # Parsed uint64 strings have at most twenty significant digits. Strip
+    # arbitrary leading zeros before int conversion to avoid its digit limit.
+    debit = int(payment.debitAmount.value.lstrip("0") or "0")
+    sent = int(payment.sentAmount.value.lstrip("0") or "0")
+    if sent > debit:
+        issues.append(ValidationIssue(("sentAmount", "value"), "amount_exceeds_debit"))
+    if sent == debit and payment.failed:
+        issues.append(ValidationIssue(("failed",), "failed_completed"))
+    if issues:
+        raise ResponseError(
+            method=method,
+            url=url,
+            status=status,
+            reason="validation",
+            validation_errors=tuple(
+                ValidationIssue(location_prefix + issue.location, issue.type)
+                for issue in issues
+            ),
         )
     return payment
 
@@ -166,7 +207,7 @@ class IncomingPayments(SecurityBase):
         """
         base_url = resource_server_endpoint.rstrip("/")
         url = f"{base_url}/incoming-payments"
-        return _execute_request(
+        result = _execute_request(
             self.http_client,
             "GET",
             url,
@@ -176,6 +217,15 @@ class IncomingPayments(SecurityBase):
             access_token=access_token,
             signer=self,
         )
+        for index, payment in enumerate(result.result):
+            _validate_incoming_payment(
+                payment,
+                method="GET",
+                url=url,
+                status=200,
+                location_prefix=("result", index),
+            )
+        return result
 
     @_sdk_operation("incoming_payments.get")
     def get(self, url: UrlInput, access_token: str) -> IncomingPaymentResponse:
@@ -280,7 +330,7 @@ class OutgoingPayments(SecurityBase):
         """
         base_url = resource_server_endpoint.rstrip("/")
         url = f"{base_url}/outgoing-payments"
-        return _execute_request(
+        result = _execute_request(
             self.http_client,
             "GET",
             url,
@@ -290,6 +340,15 @@ class OutgoingPayments(SecurityBase):
             access_token=access_token,
             signer=self,
         )
+        for index, payment in enumerate(result.result):
+            _validate_outgoing_payment(
+                payment,
+                method="GET",
+                url=url,
+                status=200,
+                location_prefix=("result", index),
+            )
+        return result
 
     @_sdk_operation("outgoing_payments.get")
     def get_outgoing_payment(

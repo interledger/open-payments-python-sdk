@@ -485,6 +485,8 @@ Query counts are integers from 1 through 100. At most one of `first` and `last` 
 
 Incoming and outgoing listing requests send the specified `wallet-address` query key, using the query model's serialization alias before preparing and signing the request. Absent or `None` query values are omitted. Cursors retain their opaque value and are encoded once by the HTTP transport. Each call returns one typed page, including empty results; the application chooses when to request another page using its returned cursors. Default Python `PaymentListQuery.model_dump()` continues to use `walletAddress`.
 
+Listing operations also validate each returned payment's related amounts. Incoming items require matching incoming/received assets when `incomingAmount` is present. Outgoing items require matching sent/debit assets, a sent amount no greater than the debit amount, and a consistent `failed` flag: a fully sent payment cannot be marked failed. Numeric comparisons preserve the original amount strings, including leading zeros; cross-currency receive amounts remain independent. Inconsistent items reject the page with `ResponseError`, reason `validation`, and safe locations beginning with `("result", index)`. These operation checks leave reusable data-model contracts unchanged.
+
 Amount values and asset codes require strings; scales and counts require integers; page flags require booleans. Incompatible types and cross-type coercions are rejected. Assignments to amount fields and wallet asset fields are validated too. The Pydantic `model_construct()`/`model_copy(update=...)` escape hatches assume trusted data; query export revalidates before returning parameters.
 
 ## Incoming payment models

@@ -241,3 +241,201 @@ def test_invalid_page_metadata_is_rejected(op_client, http_mock, kind, paginatio
         issue.location[:1] == ("pagination",)
         for issue in caught.value.validation_errors
     )
+
+
+def assert_semantic_error(error, kind, index, field, type_):
+    assert error.operation == kind + "_payments.list" and error.reason == "validation"
+    assert error.method == "GET" and error.status == 200
+    assert error.url == "https://resource.example/"
+    assert any(
+        issue.location == ("result", index) + field and issue.type == type_
+        for issue in error.validation_errors
+    )
+    rendered = (
+        str(error) + repr(error) + repr(error.args) + repr(error.validation_errors)
+    )
+    assert SECRET not in rendered + "".join(traceback.format_exception(error))
+    assert not hasattr(error, "request") and not hasattr(error, "response")
+
+
+@pytest.mark.parametrize("kind", ["incoming", "outgoing"])
+@pytest.mark.parametrize("index", [0, 1])
+@pytest.mark.parametrize("field,value", [("assetCode", SECRET), ("assetScale", 3)])
+def test_every_list_item_checks_its_related_amount_assets(
+    op_client, http_mock, kind, index, field, value
+):
+    payload = published_page(kind, "forward")
+    if kind == "incoming":
+        for item in payload["result"]:
+            item["incomingAmount"] = dict(item["receivedAmount"], value="500")
+        target = "incomingAmount"
+        model = IncomingPayment
+    else:
+        target = "sentAmount"
+        model = OutgoingPayment
+    payload["result"][index][target][field] = value
+    # The reusable data model accepts this schema-valid response; the operation rejects it.
+    model.model_validate(payload["result"][index])
+    before = copy.deepcopy(payload)
+    http_mock.responses.append(httpx.Response(200, json=payload))
+    with pytest.raises(ResponseError) as caught:
+        invoke(op_client, kind, PaymentListQuery(walletAddress=WALLET))
+    assert_semantic_error(caught.value, kind, index, (target, field), "asset_mismatch")
+    assert payload == before and len(http_mock.requests) == 1
+
+
+@pytest.mark.parametrize("index", [0, 1])
+@pytest.mark.parametrize(
+    "debit,sent,failed,field,type_",
+    [
+        ("1", "2", False, ("sentAmount", "value"), "amount_exceeds_debit"),
+        (
+            "9999999999999999999",
+            "10000000000000000000",
+            False,
+            ("sentAmount", "value"),
+            "amount_exceeds_debit",
+        ),
+        ("0001", "2", False, ("sentAmount", "value"), "amount_exceeds_debit"),
+        ("2", "0002", True, ("failed",), "failed_completed"),
+        ("0", "0000", True, ("failed",), "failed_completed"),
+        (
+            "18446744073709551615",
+            "18446744073709551615",
+            True,
+            ("failed",),
+            "failed_completed",
+        ),
+        (
+            "0" * 5000 + "1",
+            "0" * 5000 + "2",
+            False,
+            ("sentAmount", "value"),
+            "amount_exceeds_debit",
+        ),
+        (
+            "18446744073709551615",
+            "0" * 5000 + "18446744073709551615",
+            True,
+            ("failed",),
+            "failed_completed",
+        ),
+    ],
+    ids=[
+        "greater",
+        "large",
+        "padded",
+        "paid",
+        "zero",
+        "uint64",
+        "long_zeros",
+        "long_paid",
+    ],
+)
+def test_every_outgoing_item_checks_numeric_bounds_and_failure_state(
+    op_client, http_mock, index, debit, sent, failed, field, type_
+):
+    payload = published_page("outgoing", "forward")
+    item = payload["result"][index]
+    item["debitAmount"]["value"] = debit
+    item["sentAmount"]["value"] = sent
+    item["failed"] = failed
+    OutgoingPayment.model_validate(item)
+    before = copy.deepcopy(payload)
+    http_mock.responses.append(httpx.Response(200, json=payload))
+    with pytest.raises(ResponseError) as caught:
+        invoke(op_client, "outgoing", PaymentListQuery(walletAddress=WALLET))
+    assert_semantic_error(caught.value, "outgoing", index, field, type_)
+    assert payload == before and len(http_mock.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "debit,sent,failed",
+    [
+        ("0", "0000", False),
+        ("100", "99", True),
+        ("100", "0", True),
+        ("100", "99", False),
+        ("100", "100", False),
+        ("18446744073709551615", "18446744073709551615", False),
+        ("0" * 5000 + "100", "0" * 5000 + "099", False),
+        ("1", "0001", None),
+    ],
+    ids=[
+        "zero",
+        "failed_partial",
+        "failed_zero",
+        "pending",
+        "paid",
+        "uint64",
+        "long_zeros",
+        "default_state",
+    ],
+)
+def test_valid_outgoing_items_keep_cross_currency_receive_amounts_and_exact_values(
+    op_client, http_mock, debit, sent, failed
+):
+    payload = published_page("outgoing", "forward")
+    for item in payload["result"]:
+        item["debitAmount"]["value"] = debit
+        item["sentAmount"]["value"] = sent
+        item["receiveAmount"]["assetCode"] = "EUR"
+        item["receiveAmount"]["assetScale"] = 3
+        if failed is None:
+            item.pop("failed", None)
+        else:
+            item["failed"] = failed
+    before = copy.deepcopy(payload)
+    expected = [OutgoingPayment.model_validate(item) for item in payload["result"]]
+    http_mock.responses.append(httpx.Response(200, json=payload))
+    result = invoke(op_client, "outgoing", PaymentListQuery(walletAddress=WALLET))
+    assert len(result.result) == len(expected) == 2
+    for payment, model in zip(result.result, expected):
+        assert payment.model_dump(mode="json", exclude_unset=True) == model.model_dump(
+            mode="json", exclude_unset=True
+        )
+        assert payment.model_fields_set == model.model_fields_set
+        assert payment.debitAmount.value == debit and payment.sentAmount.value == sent
+        assert (
+            payment.receiveAmount.assetCode == "EUR"
+            and payment.receiveAmount.assetScale == 3
+        )
+    assert payload == before and len(http_mock.requests) == 1
+
+
+def test_incoming_items_retain_partial_completed_overpaid_and_unbounded_states(
+    op_client, http_mock
+):
+    payload = published_page("incoming", "forward")
+    sample = payload["result"][0]
+    items = []
+    for index, (incoming, received, completed) in enumerate(
+        [
+            ("500", "100", False),
+            ("500", "100", True),
+            ("250", "251", True),
+            (None, "18446744073709551615", False),
+        ]
+    ):
+        item = copy.deepcopy(sample)
+        item["id"] += "/state-" + str(index)
+        item["receivedAmount"]["value"] = received
+        item["completed"] = completed
+        if incoming is None:
+            item.pop("incomingAmount", None)
+        else:
+            item["incomingAmount"] = dict(item["receivedAmount"], value=incoming)
+        items.append(item)
+    payload["result"] = items
+    before = copy.deepcopy(payload)
+    http_mock.responses.append(httpx.Response(200, json=payload))
+    result = invoke(op_client, "incoming", PaymentListQuery(walletAddress=WALLET))
+    assert [item.receivedAmount.value for item in result.result] == [
+        "100",
+        "100",
+        "251",
+        "18446744073709551615",
+    ]
+    assert [item.completed for item in result.result] == [False, True, True, False]
+    assert result.result[-1].incomingAmount is None
+    assert payload == before and len(http_mock.requests) == 1
