@@ -1,9 +1,21 @@
 from enum import Enum
-from typing import Optional
-from pydantic import AnyUrl, BaseModel, ConfigDict, Field
+from typing import Annotated, Optional, TypeAlias
 
-from .common import AssetCode, AssetScale, Omittable
+from pydantic import (
+    AnyUrl,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StrictStr,
+    field_validator,
+)
+
+from .common import AssetCode, AssetScale, Omittable, _uri_string
 from .jwk import PublicJwk
+
+_WalletUri: TypeAlias = Annotated[AnyUrl, BeforeValidator(_uri_string)]
 
 ###################################################################################################
 # ENUMERATED TYPES
@@ -59,8 +71,8 @@ class JsonWebKeySet(BaseModel):
 
 
 class WalletAddress(BaseModel):
-    id: AnyUrl = Field(..., description="The URL identifying the wallet address.")
-    publicName: Optional[str] = Field(
+    id: _WalletUri = Field(..., description="The URL identifying the wallet address.")
+    publicName: Omittable[StrictStr] = Field(
         None,
         description="A public name for the account. This should be set by the account holder with their provider to provide a hint to counterparties as to the identity of the account holder.",
     )
@@ -74,19 +86,30 @@ class WalletAddress(BaseModel):
         description="The scale of amounts denoted in the corresponding asset code.",
         title="Asset scale",
     )
-    authServer: AnyUrl = Field(
+    authServer: _WalletUri = Field(
         ...,
         description="The URL of the authorization server endpoint for getting grants and access tokens for this wallet address.",
     )
-    resourceServer: AnyUrl = Field(
+    resourceServer: _WalletUri = Field(
         ...,
         description="The URL of the resource server endpoint for performing Open Payments with this wallet address.",
     )
-    cardService: Optional[AnyUrl] = Field(
+    cardService: Optional[_WalletUri] = Field(
         None,
         description="The URL of the card service endpoint for this wallet address.",
     )
+    __pydantic_extra__: dict[str, JsonValue]
+
     model_config = ConfigDict(
         extra="allow",
+        allow_inf_nan=False,
+        hide_input_in_errors=True,
         validate_assignment=True,
     )
+
+    @field_validator("publicName", mode="before")
+    @classmethod
+    def reject_null_public_name(cls, value):
+        if value is None:
+            raise ValueError("publicName may be omitted but must not be null")
+        return value
