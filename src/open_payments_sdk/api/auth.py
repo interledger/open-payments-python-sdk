@@ -33,6 +33,50 @@ from open_payments_sdk.models.auth import (
 from open_payments_sdk.utils.urls import UrlInput, validate_request_url
 
 
+def _grant_request_body(
+    grant_request: GrantRequest | Mapping[str, Any],
+    client_wallet_address: str | None,
+) -> GrantRequest:
+    """Resolve identity and validate the same outbound body for sync/async grants."""
+    if isinstance(grant_request, GrantRequest):
+        body = grant_request
+    elif isinstance(grant_request, Mapping):
+        payload = dict(grant_request)
+        if "client" not in payload:
+            if client_wallet_address is None:
+                raise InputError(reason="client_identity")
+            payload["client"] = client_wallet_address
+        try:
+            body = GrantRequest.model_validate(payload)
+        except ValidationError as error:
+            raise InputError(
+                reason="body",
+                validation_errors=_validation_issues(
+                    error, _schema_fields(GrantRequest)
+                ),
+            ) from None
+    else:
+        raise InputError(reason="body")
+    if body.access_token is not None:
+        for index, access in enumerate(body.access_token.access):
+            if (
+                isinstance(access, AccessOutgoing)
+                and access.limits is not None
+                and access.limits.debitAmount is not None
+                and access.limits.receiveAmount is not None
+            ):
+                raise InputError(
+                    reason="body",
+                    validation_errors=(
+                        ValidationIssue(
+                            ("access_token", "access", index, "limits"),
+                            "amount_conflict",
+                        ),
+                    ),
+                )
+    return body
+
+
 class Grants(SecurityBase):
     """
     Class to handle Grants in the sdk
@@ -65,42 +109,7 @@ class Grants(SecurityBase):
         through the same model pipeline as the compatibility entry point.
         """
         url = validate_request_url(url)
-        if isinstance(grant_request, GrantRequest):
-            body = grant_request
-        elif isinstance(grant_request, Mapping):
-            payload = dict(grant_request)
-            if "client" not in payload:
-                if self._client_wallet_address is None:
-                    raise InputError(reason="client_identity")
-                payload["client"] = self._client_wallet_address
-            try:
-                body = GrantRequest.model_validate(payload)
-            except ValidationError as error:
-                raise InputError(
-                    reason="body",
-                    validation_errors=_validation_issues(
-                        error, _schema_fields(GrantRequest)
-                    ),
-                ) from None
-        else:
-            raise InputError(reason="body")
-        if body.access_token is not None:
-            for index, access in enumerate(body.access_token.access):
-                if (
-                    isinstance(access, AccessOutgoing)
-                    and access.limits is not None
-                    and access.limits.debitAmount is not None
-                    and access.limits.receiveAmount is not None
-                ):
-                    raise InputError(
-                        reason="body",
-                        validation_errors=(
-                            ValidationIssue(
-                                ("access_token", "access", index, "limits"),
-                                "amount_conflict",
-                            ),
-                        ),
-                    )
+        body = _grant_request_body(grant_request, self._client_wallet_address)
         return _execute_request(
             self.http_client,
             "POST",

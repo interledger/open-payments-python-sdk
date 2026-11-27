@@ -373,7 +373,33 @@ An explicit `client` always takes precedence, including a wallet-address object 
 
 The constructor's wallet argument is optional for operations that supply their own identity, including directed JWK grants. Omitting both the per-call identity and the default raises `InputError` before preparing a request. Typed `GrantRequest` instances still require their own explicit identity. The compatibility helper `post_grant_request(grant_request, auth_server_endpoint)` keeps its model-only argument contract and delegates to the same request path.
 
-Initial requests support access-token, subject-only and combined request shapes described below. Each outgoing-payment access entry may specify at most one of `limits.debitAmount` and `limits.receiveAmount`; supplying both raises `InputError` before signing. This request rule also applies through the compatibility helper. The reusable `LimitsOutgoing` data model still accepts both amounts when parsing protocol data. The SDK exports the validated request model once, sends no bearer token on the initial request and does not follow signed redirects or retry.
+Initial requests support access-token, subject-only and combined request shapes described below. Each outgoing-payment access entry may specify at most one of `limits.debitAmount` and `limits.receiveAmount`; supplying both raises `InputError` before signing. This request rule also applies through the compatibility helper. The reusable `LimitsOutgoing` data model still accepts both amounts when parsing protocol data. The SDK exports the validated request model once, sends no Authorization header on the initial request and does not follow signed redirects or retry.
+
+`AsyncGrants` provides the same grant operations through an async transport:
+
+```python
+import logging
+from open_payments_sdk import AsyncHttpClient
+from open_payments_sdk.api.async_auth import AsyncGrants
+
+async def request_access(key_id, private_key):
+    async with AsyncHttpClient(http_timeout=10.0) as transport:
+        grants = AsyncGrants(
+            keyid=key_id,
+            private_key=private_key,
+            logger=logging.getLogger(__name__),
+            http_client=transport,
+            client_wallet_address="https://wallet.example/alice",
+        )
+        return await grants.request(
+            "https://auth.example/grants",
+            {"access_token": {
+                "access": [{"type": "incoming-payment", "actions": ["create"]}]
+            }},
+        )
+```
+
+Await `request`, `continue_grant` and `cancel`, or their existing compatibility method names. Identity validation, typed responses, per-call continuation credentials and signing follow the synchronous rules. Async continuation has the same bodyless/explicit JSON distinction described below; the caller verifies callbacks, retains replacement credentials and observes `wait`. No polling schedule or retry is added. Closing the transport releases connections; cancelling a grant remains an explicit operation. Cancellation after dispatch can leave an uncertain authorization outcome that the application must reconcile.
 
 ## Grant continuation and cancellation
 
