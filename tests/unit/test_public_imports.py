@@ -9,6 +9,7 @@ import pytest
 import open_payments_sdk as sdk
 from open_payments_sdk import errors
 from open_payments_sdk.client import (
+    AsyncUnauthenticatedClient,
     AuthenticatedClient,
     OpenPaymentsClient,
     UnauthenticatedClient,
@@ -25,6 +26,7 @@ def test_root_and_client_package_exports_preserve_original_class_identity():
         is LegacyClient
     )
     assert sdk.UnauthenticatedClient is UnauthenticatedClient
+    assert sdk.AsyncUnauthenticatedClient is AsyncUnauthenticatedClient
     assert len(sdk.__all__) == len(set(sdk.__all__))
     for name in sdk.__all__:
         assert getattr(sdk, name) is not None
@@ -79,13 +81,16 @@ def test_exported_config_transport_and_url_helpers_are_original_objects(module, 
         "open_payments_sdk",
         "open_payments_sdk.client",
         "open_payments_sdk.client.client",
+        "open_payments_sdk.client.async_client",
         "open_payments_sdk.configuration",
         "open_payments_sdk.api.resource",
+        "open_payments_sdk.api.async_wallet",
+        "open_payments_sdk.api.async_resource",
     ],
 )
 def test_fresh_imports_and_public_context_make_no_requests_or_keys(entry):
     script = """
-import importlib, socket, sys
+import asyncio, importlib, socket, sys
 import httpx
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -100,8 +105,12 @@ class NoPool(httpx.Client):
     def __init__(self, *args, **kwargs):
         forbidden()
 httpx.Client = NoPool
+class NoAsyncPool(httpx.AsyncClient):
+    def __init__(self, *args, **kwargs):
+        forbidden()
+httpx.AsyncClient = NoAsyncPool
 importlib.import_module(sys.argv[1])
-from open_payments_sdk import AuthenticatedClient, OpenPaymentsClient, UnauthenticatedClient
+from open_payments_sdk import AuthenticatedClient, OpenPaymentsClient, UnauthenticatedClient, AsyncUnauthenticatedClient
 from open_payments_sdk.client import UnauthenticatedClient as PackageClient
 from open_payments_sdk.client.client import OpenPaymentsClient as LegacyClient
 assert AuthenticatedClient is OpenPaymentsClient is LegacyClient
@@ -111,6 +120,13 @@ with UnauthenticatedClient() as client:
     assert not client.is_closed and client.http_client._client is None
     assert not hasattr(client.incoming_payments, "private_key")
 assert client.is_closed
+async def check_async():
+    async with AsyncUnauthenticatedClient() as client:
+        assert client.wallet is client.wallet_address
+        assert not client.is_closed and client.http_client._client is None
+        assert not hasattr(client.incoming_payments, "private_key")
+    assert client.is_closed
+asyncio.run(check_async())
 print("verified")
 """
     result = subprocess.run(

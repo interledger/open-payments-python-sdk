@@ -13,6 +13,7 @@ from open_payments_sdk.gnap_utils.keys import (
     load_public_key,
 )
 from open_payments_sdk.client import (
+    AsyncUnauthenticatedClient,
     AuthenticatedClient,
     OpenPaymentsClient,
     UnauthenticatedClient,
@@ -43,6 +44,7 @@ from open_payments_sdk.utils.urls import (
 )
 
 __all__ = [
+    "AsyncUnauthenticatedClient",
     "AuthenticatedClient",
     "OpenPaymentsClient",
     "UnauthenticatedClient",

@@ -463,57 +463,92 @@ def _redirect_target(base: httpx.URL, location: str) -> str:
     return target
 
 
+def _public_request(
+    client: "_RequestBuilder", url: str, crossed_origin: bool
+) -> Request:
+    request = _prepare_request(client, "GET", url)
+    request.headers.setdefault("Accept", "application/json")
+    for name in _PUBLIC_CREDENTIAL_HEADERS:
+        request.headers.pop(name, None)
+    if crossed_origin:
+        # Never restore custom defaults after leaving the original origin.
+        request.headers = httpx.Headers(
+            (name, value)
+            for name, value in request.headers.multi_items()
+            if name.lower() in ("host", "accept", "user-agent")
+        )
+    return request
+
+
+def _public_redirect(
+    request: Request, error: ResponseError, seen: set[httpx.URL], redirects: int
+) -> str:
+    if error.status not in _REDIRECT_STATUSES:
+        raise error
+    reason = None
+    try:
+        if error.location is None:
+            raise InputError(reason="request_url")
+        target = _redirect_target(request.url, error.location)
+    except (InputError, ValueError):
+        reason = "redirect_location"
+    else:
+        if httpx.URL(target) in seen:
+            reason = "redirect_loop"
+        elif redirects == 5:
+            reason = "redirect_limit"
+        else:
+            return target
+    raise ResponseError(
+        method=request.method,
+        url=request.url,
+        status=error.status,
+        location=error.location,
+        reason=reason,
+    ) from None
+
+
+def _different_origin(first: httpx.URL, second: httpx.URL) -> bool:
+    return (first.scheme, first.host, first.port) != (
+        second.scheme,
+        second.host,
+        second.port,
+    )
+
+
 def _public_get(client: "HttpClientProtocol", url: str, response_model: type[T]) -> T:
     """Read public JSON with at most five secure redirects, never signed replay."""
     crossed_origin = False
     seen: set[httpx.URL] = set()
     for redirects in range(6):
-        request = _prepare_request(client, "GET", url)
-        request.headers.setdefault("Accept", "application/json")
-        for name in _PUBLIC_CREDENTIAL_HEADERS:
-            request.headers.pop(name, None)
-        if crossed_origin:
-            # Rebuild each hop, but do not reintroduce session/custom defaults
-            # after leaving the original origin, even if a later hop returns.
-            request.headers = httpx.Headers(
-                (name, value)
-                for name, value in request.headers.multi_items()
-                if name.lower() in ("host", "accept", "user-agent")
-            )
+        request = _public_request(client, url, crossed_origin)
         seen.add(request.url)
         try:
             return _request_result(client, request, response_model)
         except ResponseError as error:
-            if error.status not in _REDIRECT_STATUSES:
-                raise
-            reason = None
-            try:
-                if error.location is None:
-                    raise InputError(reason="request_url")
-                target = _redirect_target(request.url, error.location)
-            except (InputError, ValueError):
-                reason = "redirect_location"
-            else:
-                next_url = httpx.URL(target)
-                if next_url in seen:
-                    reason = "redirect_loop"
-                elif redirects == 5:
-                    reason = "redirect_limit"
-                else:
-                    crossed_origin = crossed_origin or (
-                        request.url.scheme,
-                        request.url.host,
-                        request.url.port,
-                    ) != (next_url.scheme, next_url.host, next_url.port)
-                    url = target
-                    continue
-            raise ResponseError(
-                method=request.method,
-                url=request.url,
-                status=error.status,
-                location=error.location,
-                reason=reason,
-            ) from None
+            url = _public_redirect(request, error, seen, redirects)
+            crossed_origin = crossed_origin or _different_origin(
+                request.url, httpx.URL(url)
+            )
+    raise AssertionError("Unreachable discovery redirect state")
+
+
+async def _async_public_get(
+    client: "AsyncHttpClientProtocol", url: str, response_model: type[T]
+) -> T:
+    """Await public JSON using the same unsigned HTTPS redirect policy."""
+    crossed_origin = False
+    seen: set[httpx.URL] = set()
+    for redirects in range(6):
+        request = _public_request(client, url, crossed_origin)
+        seen.add(request.url)
+        try:
+            return await _async_request_result(client, request, response_model)
+        except ResponseError as error:
+            url = _public_redirect(request, error, seen, redirects)
+            crossed_origin = crossed_origin or _different_origin(
+                request.url, httpx.URL(url)
+            )
     raise AssertionError("Unreachable discovery redirect state")
 
 
@@ -732,6 +767,13 @@ class AsyncHttpClient(AsyncHttpClientProtocol):
                     raise ConfigurationError(reason="http_client") from None
             return self._client
 
+    def _discard_unopened(self) -> None:
+        """Release a failed facade's wrapper before it could allocate a pool."""
+        with self._lifecycle_lock:
+            if self._owns_client and self._client is not None:
+                raise ConfigurationError(reason="async_cleanup")
+            self._closed = True
+
     async def _finish_close(self, client: httpx.AsyncClient, done: anyio.Event) -> None:
         # A structured child lets its parent receive direct asyncio task
         # cancellation while still joining this shielded cleanup on exit.
@@ -856,3 +898,65 @@ class _ClientSession(HttpClientProtocol):
             self._closed = True
         if self._close_transport is not None:
             self._close_transport()
+
+
+class _AsyncClientSession(AsyncHttpClientProtocol):
+    """Capture facade configuration while preserving caller-owned async I/O."""
+
+    def __init__(
+        self,
+        transport: AsyncHttpClientProtocol,
+        headers: httpx.Headers,
+        owned_transport: AsyncHttpClient | None = None,
+    ):
+        self._transport = transport
+        self._headers = headers.copy()
+        self._owned_transport = owned_transport
+        self._closed = False
+        self._lifecycle_lock = Lock()
+
+    @property
+    def is_closed(self) -> bool:
+        with self._lifecycle_lock:
+            return self._closed or getattr(self._transport, "is_closed", False) is True
+
+    def _check_open(self) -> None:
+        if self.is_closed:
+            raise ConfigurationError(reason="closed")
+
+    def build_request(
+        self,
+        method: str,
+        url: str,
+        headers=None,
+        data=None,
+        json: dict | None = None,
+        params: dict | None = None,
+    ) -> Request:
+        self._check_open()
+        try:
+            merged = self._headers.copy()
+            if headers is not None:
+                merged.update(headers)
+        except (ValueError, TypeError):
+            raise InputError(method=method, url=url, reason="request") from None
+        return self._transport.build_request(
+            method=method, url=url, headers=merged, data=data, json=json, params=params
+        )
+
+    async def send(self, request: Request) -> Response:
+        self._check_open()
+        return await self._transport.send(request=request)
+
+    async def aclose(self) -> None:
+        with self._lifecycle_lock:
+            self._closed = True
+        if self._owned_transport is not None:
+            # Owned wrappers already join exactly one native cleanup.
+            await self._owned_transport.aclose()
+
+    def _discard_unopened(self) -> None:
+        with self._lifecycle_lock:
+            self._closed = True
+        if self._owned_transport is not None:
+            self._owned_transport._discard_unopened()

@@ -4,9 +4,10 @@ Server diagnostics and suppressed exception context are available for deliberate
 inspection. They can contain credentials and must not be logged indiscriminately.
 """
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache, wraps
-from typing import Callable, ParamSpec, TypeVar
+from typing import Awaitable, Callable, ParamSpec, TypeVar
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -187,30 +188,53 @@ P = ParamSpec("P")
 T = TypeVar("T")
 
 
+@contextmanager
+def _operation_errors(name: str, args, kwargs):
+    """Attach operation metadata and sanitize model failures after either I/O path."""
+    try:
+        yield
+    except OpenPaymentsError as error:
+        error.operation = name
+        raise
+    except ValidationError as error:
+        fields = frozenset().union(
+            *(
+                _schema_fields(type(value))
+                for value in (*args, *kwargs.values())
+                if isinstance(value, BaseModel)
+            )
+        )
+        raise InputError(
+            operation=name, validation_errors=_validation_issues(error, fields)
+        ) from None
+    except PydanticSerializationError:
+        raise InputError(operation=name, reason="serialization") from None
+
+
 def _sdk_operation(name: str) -> Callable[[Callable[P, T]], Callable[P, T]]:
     """Attach a fixed operation name without changing legacy call signatures."""
 
     def decorate(function: Callable[P, T]) -> Callable[P, T]:
         @wraps(function)
         def wrapped(*args: P.args, **kwargs: P.kwargs) -> T:
-            try:
+            with _operation_errors(name, args, kwargs):
                 return function(*args, **kwargs)
-            except OpenPaymentsError as error:
-                error.operation = name
-                raise
-            except ValidationError as error:
-                fields = frozenset().union(
-                    *(
-                        _schema_fields(type(value))
-                        for value in (*args, *kwargs.values())
-                        if isinstance(value, BaseModel)
-                    )
-                )
-                raise InputError(
-                    operation=name, validation_errors=_validation_issues(error, fields)
-                ) from None
-            except PydanticSerializationError:
-                raise InputError(operation=name, reason="serialization") from None
+
+        return wrapped
+
+    return decorate
+
+
+def _async_sdk_operation(
+    name: str,
+) -> Callable[[Callable[P, Awaitable[T]]], Callable[P, Awaitable[T]]]:
+    """Apply the same operation boundary while awaiting the asynchronous call."""
+
+    def decorate(function: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
+        @wraps(function)
+        async def wrapped(*args: P.args, **kwargs: P.kwargs) -> T:
+            with _operation_errors(name, args, kwargs):
+                return await function(*args, **kwargs)
 
         return wrapped
 

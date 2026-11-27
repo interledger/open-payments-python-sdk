@@ -241,15 +241,32 @@ with UnauthenticatedClient() as client:
     )
 ```
 
-Public incoming reads return `PublicIncomingPayment` with the required `authServer` and `methods`; `walletAddress` is not required. Resource URLs must be absolute HTTP(S) URLs, including any path prefix and opaque query data. Payment pointers and bare host/path forms are for wallet discovery. Both client types expose `client.incoming_payments.get_public(url)`; the public client also offers the shorter `get(url)`. Authenticated clients offer signed `get(url, access_token)` and retain `get_incoming_payment(...)`. Public reads use no access token or signature and do not fall back to a signed request.
+Use `AsyncUnauthenticatedClient` for the same public operations with native async I/O. Await its resource methods, and use `async with` or `await client.aclose()` for cleanup:
 
-Wallet metadata and JWKS operations accept HTTP(S) URLs, payment pointers and the existing bare host/path form. `wallet.get_wallet_address(wallet_address_server_endpoint=...)` remains available, and `client.wallet_address` is an alias of `client.wallet` on both client types. Authenticated clients use the same unsigned discovery operations. `get_keys` appends `/jwks.json` to the wallet path before any query string, preserving path prefixes and opaque query data; it does not first fetch the wallet metadata.
+```python
+from open_payments_sdk import AsyncUnauthenticatedClient
+
+async def public_details():
+    async with AsyncUnauthenticatedClient() as client:
+        wallet = await client.wallet.get("$wallet.example/alice")
+        keys = await client.wallet.get_keys(wallet.id)
+        incoming = await client.incoming_payments.get(
+            "https://resource.example/tenant/incoming-payments/opaque-id"
+        )
+        return wallet, keys, incoming
+```
+
+The async client supports asyncio and Trio, and accepts `Configuration`, a borrowed `httpx.AsyncClient`, or a caller-owned `AsyncHttpClientProtocol` with synchronous request construction and async sending. Construction performs no I/O or key loading. It snapshots configuration and preserves caller-owned transports when closed. Cached resource methods reject use after closing the facade. Finish active requests before closing, and keep each client within one backend/event loop. Cancellation propagates without retrying a read; owned cleanup follows the async transport rules below.
+
+Public incoming reads return `PublicIncomingPayment` with the required `authServer` and `methods`; `walletAddress` is not required. Resource URLs must be absolute HTTP(S) URLs, including any path prefix and opaque query data. Payment pointers and bare host/path forms are for wallet discovery. Public clients expose `client.incoming_payments.get_public(url)` and the shorter `get(url)`. Authenticated synchronous clients also expose unsigned `get_public(url)`, offer signed `get(url, access_token)` and retain `get_incoming_payment(...)`. Public reads use no access token or signature and do not fall back to a signed request.
+
+Wallet metadata and JWKS operations accept HTTP(S) URLs, payment pointers and the existing bare host/path form. `wallet.get_wallet_address(wallet_address_server_endpoint=...)` remains available, and `client.wallet_address` is an alias of `client.wallet` on all client facades. Authenticated clients use the same unsigned discovery operations. `get_keys` appends `/jwks.json` to the wallet path before any query string, preserving path prefixes and opaque query data; it does not first fetch the wallet metadata.
 
 Public discovery reads follow at most five redirects with status 301, 302, 303, 307 or 308. Every redirect target must be HTTPS, including redirects from an HTTP development endpoint. Relative `Location` references resolve against the current request URL; malformed targets, credentials, fragments, loops and excess redirects raise `ResponseError`. An origin change drops custom headers; subsequent hops retain only `Host`, `Accept` and `User-Agent`, even if they return to the original origin. Same-origin redirects retain configured headers. No authorization, cookies or signing headers are added to these reads. Redirect state is local to each call; no permanent redirect cache is maintained.
 
-The public client uses the same configuration, injectable transports, timeout snapshots, quiet logger and ownership/close rules described below. Caller-owned event hooks and custom transports control their own behavior.
+Public clients use the same configuration, injectable transports, timeout snapshots, quiet logger and ownership/close rules described below. Caller-owned event hooks and custom transports control their own behavior.
 
-Package-level imports expose `OpenPaymentsClient`, its `AuthenticatedClient` alias, `UnauthenticatedClient`, `Configuration`, `HttpClient`, `HttpClientProtocol`, SDK error types and the URL/pointer helpers alongside the existing cryptography helpers. Client classes are also available from `open_payments_sdk.client`; existing imports from `open_payments_sdk.client.client` and other implementation modules remain valid. Response and request models stay available from their existing `open_payments_sdk.models` modules.
+Package-level imports expose `OpenPaymentsClient`, its `AuthenticatedClient` alias, `UnauthenticatedClient`, `AsyncUnauthenticatedClient`, `Configuration`, synchronous/asynchronous HTTP transports and their protocols, SDK error types and the URL/pointer helpers alongside the existing cryptography helpers. Client classes are also available from `open_payments_sdk.client`; existing imports from `open_payments_sdk.client.client` and other implementation modules remain valid. Response and request models stay available from their existing `open_payments_sdk.models` modules.
 
 ## Client configuration and lifecycle
 
