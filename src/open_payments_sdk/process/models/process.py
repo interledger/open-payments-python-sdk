@@ -2,8 +2,9 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, AnyUrl
 from ulid import ULID
 
+from ...models.auth import GrantContinueResponse
 from ...models.wallet import WalletAddress
-from ...models.resource import Amount
+from ...models.resource import Amount, OutgoingPaymentWithSpentAmounts
 from ...utils.parser import paymentsparser
 
 
@@ -22,13 +23,19 @@ class PendingIncomingPaymentTransaction(BaseModel):
         description="Data for the seller's open payments wallet",
     )
     incoming_payment_id: Optional[AnyUrl] = Field(
-        None, description="URL reference to incoming payment generated during initial grant to seller."
+        None,
+        description="URL reference to incoming payment generated during initial grant to seller.",
     )
-    incoming_amount: Optional[Amount] = Field(None, description="Amount requested, including currency code.")
+    incoming_amount: Optional[Amount] = Field(
+        None, description="Amount requested, including currency code."
+    )
     quote_id: Optional[AnyUrl] = Field(
-        None, description="URL reference to quote generated during initial grant to buyer."
+        None,
+        description="URL reference to quote generated during initial grant to buyer.",
     )
-    quoted_amount: Optional[Amount] = Field(None, description="Amount quoted, including currency code.")
+    quoted_amount: Optional[Amount] = Field(
+        None, description="Amount quoted, including currency code."
+    )
     client_nonce: Optional[str] = Field(
         None,
         repr=False,
@@ -59,6 +66,18 @@ class PendingIncomingPaymentTransaction(BaseModel):
         False,
         description="A completion attempt was claimed; persist this even if its outcome is uncertain.",
     )
+    continuation_response: Optional[GrantContinueResponse] = Field(
+        None,
+        repr=False,
+        description="Latest validated continuation result, including replacement credentials and wait.",
+    )
+    outgoing_payment: Optional[OutgoingPaymentWithSpentAmounts] = Field(
+        None,
+        repr=False,
+        description="Validated outgoing creation result retained for recovery and reconciliation.",
+    )
+
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     @field_validator("buyer", "seller", mode="before")
     @classmethod
@@ -92,7 +111,9 @@ class SellerOpenPaymentAccount(BaseModel):
     @field_validator("walletAddressUrl", mode="before")
     @classmethod
     def evaluate_wallet_address(cls, walletAddressUrl):
-        walletAddressUrl = paymentsparser.normalise_wallet_address(wallet_address=walletAddressUrl)
+        walletAddressUrl = paymentsparser.normalise_wallet_address(
+            wallet_address=walletAddressUrl
+        )
         return walletAddressUrl
 
     @field_validator("privateKey", mode="before")

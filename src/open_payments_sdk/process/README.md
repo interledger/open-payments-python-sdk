@@ -49,6 +49,12 @@ Only then should you consider the transaction successfully completed.
 
 Each transaction allows one initiation and one completion attempt. The processor sets `completion_started` before sending the continuation and keeps it set on success or failure, including an uncertain HTTP outcome. Persist the mutated state even when completion raises; reconcile uncertain outcomes with the provider before considering another payment attempt.
 
+After a validated continuation, `pending_payment.continuation_response` retains a snapshot of the full result, including any issued token and its management URI, permissions and expiry, subject data, and continuation wait. `continue_url` and `continue_id` are updated to the replacement credentials before outgoing creation. These updates are in memory; persist the mutated model when the call returns or raises, including when creation fails. A pending or subject-only continuation raises `ValueError` before creating a payment; its response and replacement continuation credentials remain available for the application's explicit handling. Respect the returned wait before any further continuation request.
+
+Successful creation also stores a snapshot in `pending_payment.outgoing_payment` before returning the payment. Its ID and amounts survive JSON serialization and recovery, and changing the returned payment does not change that snapshot. Old records without these two optional fields still load. These snapshots are omitted from ordinary model representations; explicit dumps contain credentials and payment data and belong in protected storage.
+
+Retaining a result does not reset `completion_started` or make a repeated callback safe to replay. After an HTTP or validation failure, an absent outgoing result does not establish that the provider created no payment. Use the stored context for reconciliation. The processor does not poll pending grants, rotate tokens automatically or restart a failed completion.
+
 The in-process guard synchronizes calls sharing the same pending model. Your application must atomically claim the persisted record before completion to coordinate separate workers, reloaded records or copied models, and retain that durable claim across crashes. The SDK does not provide a database transaction or replay store.
 
 ## Architecture decisions

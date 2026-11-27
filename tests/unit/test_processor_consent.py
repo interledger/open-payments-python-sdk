@@ -1,6 +1,7 @@
 """Consent and replay checks around real mocked SDK dispatch."""
 
 import json
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from types import SimpleNamespace
@@ -8,9 +9,9 @@ from unittest.mock import Mock
 
 import httpx
 import pytest
-from pydantic import AnyUrl
+from pydantic import AnyUrl, ValidationError
 
-from open_payments_sdk.errors import HTTPError
+from open_payments_sdk.errors import HTTPError, ResponseError
 from open_payments_sdk.models.resource import Amount
 from open_payments_sdk.process.crud import OpenPaymentsProcessor
 from open_payments_sdk.process.models.process import (
@@ -409,3 +410,198 @@ def test_pending_repr_hides_nonces_and_continuation_token(purchase):
     assert CLIENT_NONCE not in representation
     assert SERVER_NONCE not in representation
     assert CONTINUE_TOKEN not in representation
+
+
+def updated_continuation_payload():
+    payload = continuation_response().json()
+    payload["continue"] = {
+        "uri": "https://server.example.com/replacement%2Fcontinue?version=%2f",
+        "access_token": {"value": "replacement-continuation-secret"},
+        "wait": 4,
+    }
+    payload["access_token"]["expires_in"] = 60
+    payload["subject"] = {"sub_ids": [{"format": "uri", "id": BUYER}]}
+    payload["provider"] = {"null": None}
+    return payload
+
+
+def test_completion_snapshots_credentials_and_outgoing_result_survive_recovery(
+    purchase, monkeypatch
+):
+    grant_payload = updated_continuation_payload()
+    payment_payload = outgoing_response().json()
+    payment_payload["receiveAmount"] = {
+        "value": "900",
+        "assetCode": "EUR",
+        "assetScale": 3,
+    }
+    payment_payload["metadata"] = {"invoice": "private-invoice"}
+    # Receiving assets are independent of the buyer's sending/quoted assets.
+    for seller in (purchase.processor.seller_wallet, purchase.pending.seller):
+        seller.assetCode, seller.assetScale = "EUR", 3
+    received = []
+    continue_grant = purchase.processor.client.grants.post_grant_continuation_request
+
+    def capture(**kwargs):
+        result = continue_grant(**kwargs)
+        received.append(result)
+        return result
+
+    monkeypatch.setattr(
+        purchase.processor.client.grants, "post_grant_continuation_request", capture
+    )
+    purchase.http.responses.extend(
+        [
+            httpx.Response(200, json=grant_payload),
+            httpx.Response(201, json=payment_payload),
+        ]
+    )
+    result = complete(purchase)
+    saved = purchase.pending.model_dump_json(exclude_unset=True)
+    restored = PendingIncomingPaymentTransaction.model_validate_json(saved)
+    for state in (purchase.pending, restored):
+        assert state.continuation_response.model_dump(mode="json") == grant_payload
+        assert str(state.continue_url) == grant_payload["continue"]["uri"]
+        assert state.continue_id == grant_payload["continue"]["access_token"]["value"]
+        assert (
+            state.outgoing_payment.model_dump(mode="json", exclude_unset=True)
+            == payment_payload
+        )
+        assert state.completion_started
+        assert state.outgoing_payment.debitAmount.assetCode == "USD"
+        assert state.outgoing_payment.receiveAmount.assetCode == "EUR"
+        assert state.outgoing_payment.receiveAmount.assetScale == 3
+    assert purchase.pending.outgoing_payment is not result
+    assert purchase.pending.continuation_response is not received[0]
+    result.metadata["invoice"] = "changed"
+    received[0].access_token.value = "changed-token"
+    received[0].cont.access_token.value = "changed-continuation"
+    assert purchase.pending.outgoing_payment.metadata["invoice"] == "private-invoice"
+    assert purchase.pending.continuation_response.access_token.value == ACCESS_TOKEN
+    assert (
+        purchase.pending.continuation_response.cont.access_token.value
+        == purchase.pending.continue_id
+    )
+    representation = repr(purchase.pending)
+    for private in (ACCESS_TOKEN, "replacement-continuation-secret", "private-invoice"):
+        assert private not in representation
+        assert private in saved
+    count = len(purchase.http.requests)
+    with pytest.raises(ValueError, match="completion already started"):
+        complete(purchase, pending_payment=restored)
+    assert len(purchase.http.requests) == count
+
+
+@pytest.mark.parametrize("failure", ["http", "invalid_response"])
+def test_latest_grant_state_is_saved_before_outgoing_io_and_survives_failure(
+    purchase, monkeypatch, failure
+):
+    payload = updated_continuation_payload()
+    purchase.http.responses.extend(
+        [
+            httpx.Response(200, json=payload),
+            httpx.Response(
+                500 if failure == "http" else 201, json={"error": "uncertain"}
+            ),
+        ]
+    )
+    send = purchase.http.client.send
+
+    def check_state(request):
+        if request.url.path.endswith("/outgoing-payments"):
+            assert purchase.pending.completion_started
+            assert (
+                purchase.pending.continuation_response.model_dump(mode="json")
+                == payload
+            )
+            assert str(purchase.pending.continue_url) == payload["continue"]["uri"]
+            assert (
+                purchase.pending.continue_id
+                == payload["continue"]["access_token"]["value"]
+            )
+            assert purchase.pending.outgoing_payment is None
+            assert request.headers["Authorization"] == "GNAP " + ACCESS_TOKEN
+        return send(request)
+
+    monkeypatch.setattr(purchase.http.client, "send", check_state)
+    with pytest.raises(HTTPError if failure == "http" else ResponseError):
+        complete(purchase)
+    restored = PendingIncomingPaymentTransaction.model_validate_json(
+        purchase.pending.model_dump_json()
+    )
+    assert restored.continuation_response.model_dump(mode="json") == payload
+    assert restored.outgoing_payment is None and restored.completion_started
+    count = len(purchase.http.requests)
+    with pytest.raises(ValueError, match="completion already started"):
+        complete(purchase, pending_payment=restored)
+    assert len(purchase.http.requests) == count
+
+
+@pytest.mark.parametrize("with_subject", [False, True])
+def test_tokenless_continuation_is_retained_without_outgoing_creation_or_replay(
+    purchase, with_subject
+):
+    payload = updated_continuation_payload()
+    del payload["access_token"]
+    if not with_subject:
+        del payload["subject"]
+    purchase.http.responses.append(httpx.Response(200, json=payload))
+    with pytest.raises(
+        ValueError, match="has not issued an outgoing payment access token"
+    ) as caught:
+        complete(purchase)
+    assert "replacement-continuation-secret" not in "".join(
+        traceback.format_exception(caught.value)
+    )
+    restored = PendingIncomingPaymentTransaction.model_validate_json(
+        purchase.pending.model_dump_json()
+    )
+    assert restored.continuation_response.model_dump(mode="json") == payload
+    assert str(restored.continue_url) == payload["continue"]["uri"]
+    assert restored.continue_id == payload["continue"]["access_token"]["value"]
+    assert restored.continuation_response.cont.wait == 4
+    assert restored.outgoing_payment is None and restored.completion_started
+    assert len(purchase.http.requests) == 4
+    with pytest.raises(ValueError, match="completion already started"):
+        complete(purchase, pending_payment=restored)
+    assert len(purchase.http.requests) == 4
+
+
+@pytest.mark.parametrize("status", [200, 401])
+def test_invalid_or_denied_continuation_keeps_the_original_context_and_claim(
+    purchase, status
+):
+    purchase.http.responses.append(httpx.Response(status, json={"error": "denied"}))
+    with pytest.raises(ResponseError if status == 200 else HTTPError):
+        complete(purchase)
+    restored = PendingIncomingPaymentTransaction.model_validate_json(
+        purchase.pending.model_dump_json()
+    )
+    assert restored.continuation_response is restored.outgoing_payment is None
+    assert (
+        restored.continue_id == CONTINUE_TOKEN
+        and str(restored.continue_url) == CONTINUE_URL
+    )
+    assert restored.completion_started and len(purchase.http.requests) == 4
+
+
+def test_older_pending_records_without_snapshots_can_still_complete(purchase):
+    payload = json.loads(purchase.pending.model_dump_json())
+    del payload["continuation_response"], payload["outgoing_payment"]
+    restored = PendingIncomingPaymentTransaction.model_validate(payload)
+    assert restored.continuation_response is restored.outgoing_payment is None
+    purchase.http.responses.extend([continuation_response(), outgoing_response()])
+    result = complete(purchase, pending_payment=restored)
+    assert restored.outgoing_payment.id == result.id
+    assert restored.continuation_response.access_token.value == ACCESS_TOKEN
+
+
+def test_stored_snapshot_validation_errors_hide_credential_inputs(purchase):
+    payload = json.loads(purchase.pending.model_dump_json())
+    secret = "DO-NOT-PRINT-invalid-snapshot-secret"
+    payload["continuation_response"] = {
+        "continue": {"uri": CONTINUE_URL, "access_token": secret},
+    }
+    with pytest.raises(ValidationError) as caught:
+        PendingIncomingPaymentTransaction.model_validate(payload)
+    assert secret not in str(caught.value)

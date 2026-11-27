@@ -59,7 +59,9 @@ class OpenPaymentsProcessor:
             client_wallet_address=self.seller.walletAddressUrl,
             http_client=self.http_client,
         )
-        self.seller_wallet = self.client.wallet.get_wallet_address(self.seller.walletAddressUrl)
+        self.seller_wallet = self.client.wallet.get_wallet_address(
+            self.seller.walletAddressUrl
+        )
         self.buyer_wallet = self.client.wallet.get_wallet_address(self.buyer)
         self.pending_payment = PendingIncomingPaymentTransaction(
             **{"id": ULID(), "seller": self.seller_wallet, "buyer": self.buyer_wallet}
@@ -70,7 +72,9 @@ class OpenPaymentsProcessor:
     # 1. GRANT-MAKING GENERAL UTILITY
     ###################################################################################################
 
-    def request_grant(self, *, grant: str, actions: list[str], endpoint: AnyUrl) -> Grant:
+    def request_grant(
+        self, *, grant: str, actions: list[str], endpoint: AnyUrl
+    ) -> Grant:
         request = GrantRequest(
             **{
                 "access_token": {
@@ -84,7 +88,9 @@ class OpenPaymentsProcessor:
                 "client": str(self.seller_wallet.id),
             }
         )
-        return self.client.grants.post_grant_request(grant_request=request, auth_server_endpoint=str(endpoint))
+        return self.client.grants.post_grant_request(
+            grant_request=request, auth_server_endpoint=str(endpoint)
+        )
 
     ###################################################################################################
     # 2. SELLER INCOMING PAYMENT PROCESS
@@ -114,7 +120,9 @@ class OpenPaymentsProcessor:
             }
         )
         return self.client.incoming_payments.post_create_payment(
-            payment=payment, resource_server_endpoint=str(self.seller_wallet.resourceServer), access_token=access_token
+            payment=payment,
+            resource_server_endpoint=str(self.seller_wallet.resourceServer),
+            access_token=access_token,
         )
 
     ###################################################################################################
@@ -125,7 +133,9 @@ class OpenPaymentsProcessor:
         """TO THE BUYER"""
         # Request a grant
         grant = self.request_grant(
-            grant="quote", actions=["create", "read", "read-all"], endpoint=self.buyer_wallet.authServer
+            grant="quote",
+            actions=["create", "read", "read-all"],
+            endpoint=self.buyer_wallet.authServer,
         )
         grant = grant.model_dump(exclude_unset=True, mode="json")
         access_token = grant.get("access_token", {}).get("value")
@@ -138,7 +148,9 @@ class OpenPaymentsProcessor:
             }
         )
         return self.client.quotes.post_create_quote(
-            quote=quote, resource_server_endpoint=str(self.buyer_wallet.resourceServer), access_token=access_token
+            quote=quote,
+            resource_server_endpoint=str(self.buyer_wallet.resourceServer),
+            access_token=access_token,
         )
 
     ###################################################################################################
@@ -308,10 +320,21 @@ class OpenPaymentsProcessor:
             continue_uri=str(pending_payment.continue_url),
             access_token=pending_payment.continue_id,
         )
+        # Retain replacement credentials even if no payment token was issued or
+        # the following creation has an uncertain outcome. Persistence is app-owned.
+        pending_payment.continuation_response = grant_request.model_copy(deep=True)
+        pending_payment.continue_url = grant_request.cont.uri
+        pending_payment.continue_id = grant_request.cont.access_token.value
+        if grant_request.access_token is None:
+            raise ValueError(
+                "Grant continuation has not issued an outgoing payment access token"
+            )
         access_token = grant_request.access_token.value
         # Create an outgoing payment from the `buyer`
-        return self.client.outgoing_payments.post_create_payment(
+        payment = self.client.outgoing_payments.post_create_payment(
             payment=outgoing_payment_request,
             resource_server_endpoint=str(pending_payment.buyer.resourceServer),
             access_token=access_token,
         )
+        pending_payment.outgoing_payment = payment.model_copy(deep=True)
+        return payment
