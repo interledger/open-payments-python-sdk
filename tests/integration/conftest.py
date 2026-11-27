@@ -5,7 +5,7 @@ import pytest
 from open_payments_sdk.api.wallet import Wallet
 from open_payments_sdk.client.client import OpenPaymentsClient
 from open_payments_sdk.http import HttpClient
-from open_payments_sdk.models.auth import GrantRequest
+from open_payments_sdk.models.auth import ClientWalletAddress, GrantRequest
 
 
 @pytest.fixture
@@ -43,5 +43,5 @@ def grant_req_dto(op_seller_account):
                 }
             ]
         },
-        client=op_seller_account.walletAddressUrl,
+        client=ClientWalletAddress(walletAddress=op_seller_account.walletAddressUrl),
     )
