@@ -163,6 +163,8 @@ def _model_payload(
 ) -> dict[str, Any]:
     if not isinstance(value, expected):
         raise InputError(reason=kind)
+    if kind == "query":
+        return value.model_dump(exclude_unset=True, mode="json", by_alias=True)
     return value.model_dump(exclude_unset=True, mode="json")
 
 

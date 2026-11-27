@@ -277,10 +277,12 @@ def test_list_queries_serialize_once_before_preparation_and_signing(
     with pytest.raises(ResponseError):
         call(op_client, query)
     assert events == ["serialize", "prepare", "sign", "send", "decode"]
-    assert options == [{"exclude_unset": True, "mode": "json"}]
+    assert options == [{"exclude_unset": True, "mode": "json", "by_alias": True}]
     assert BaseModel.model_dump(query, exclude_unset=True, mode="json") == before
     request = prepared[0]
     assert request.content == b""
+    assert request.url.params["wallet-address"] == WALLET
+    assert "walletAddress" not in request.url.params
     assert request.url.params["first"] == "2"
     assert request.url.params["cursor"] == "opaque +/=?&%"
     assert "last" not in request.url.params

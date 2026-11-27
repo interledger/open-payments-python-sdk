@@ -483,6 +483,8 @@ assert empty_page.model_dump() == {
 
 Query counts are integers from 1 through 100. At most one of `first` and `last` may be supplied, matching the Node SDK's direction types; this is an SDK rule beyond the specification's separate count constraints. Optional Python query values of `None` mean omission. `to_query_params()` exports raw values with `wallet-address`; URL encoding belongs to the transport. The public `walletAddress` attribute and JSON request-body field name remain available.
 
+Incoming and outgoing listing requests send the specified `wallet-address` query key, using the query model's serialization alias before preparing and signing the request. Absent or `None` query values are omitted. Cursors retain their opaque value and are encoded once by the HTTP transport. Each call returns one typed page, including empty results; the application chooses when to request another page using its returned cursors. Default Python `PaymentListQuery.model_dump()` continues to use `walletAddress`.
+
 Amount values and asset codes require strings; scales and counts require integers; page flags require booleans. Incompatible types and cross-type coercions are rejected. Assignments to amount fields and wallet asset fields are validated too. The Pydantic `model_construct()`/`model_copy(update=...)` escape hatches assume trusted data; query export revalidates before returning parameters.
 
 ## Incoming payment models
