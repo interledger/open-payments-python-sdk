@@ -2,7 +2,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, AnyUrl
 from ulid import ULID
 
-from ...models.auth import GrantContinueResponse
+from ...models.auth import Grant, GrantContinueResponse
 from ...models.wallet import WalletAddress
 from ...models.resource import Amount, OutgoingPaymentWithSpentAmounts
 from ...utils.parser import paymentsparser
@@ -65,6 +65,16 @@ class PendingIncomingPaymentTransaction(BaseModel):
     completion_started: bool = Field(
         False,
         description="A completion attempt was claimed; persist this even if its outcome is uncertain.",
+    )
+    incoming_grant: Optional[Grant] = Field(
+        None,
+        repr=False,
+        description="Latest validated incoming-payment grant response, including pending instructions.",
+    )
+    quote_grant: Optional[Grant] = Field(
+        None,
+        repr=False,
+        description="Latest validated quote grant response, including pending instructions.",
     )
     continuation_response: Optional[GrantContinueResponse] = Field(
         None,

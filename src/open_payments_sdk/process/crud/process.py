@@ -7,6 +7,7 @@ from pydantic import AnyUrl, HttpUrl
 from ...http import HttpClient
 from ...client.client import OpenPaymentsClient
 from ...api.auth import GrantRequest, Grant, InteractRef
+from ...models.auth import GrantResponse
 from ...models.resource import (
     IncomingPaymentRequest,
     OutgoingPaymentRequest,
@@ -96,33 +97,34 @@ class OpenPaymentsProcessor:
     # 2. SELLER INCOMING PAYMENT PROCESS
     ###################################################################################################
 
+    def _incoming_payment_request(self, amount: int | str) -> IncomingPaymentRequest:
+        """Validate the amount and seller assets before requesting authorization."""
+        if isinstance(amount, int) and not isinstance(amount, bool):
+            amount = str(amount)
+        return IncomingPaymentRequest(
+            walletAddress=str(self.seller_wallet.id),
+            incomingAmount={
+                "value": amount,
+                "assetCode": self.seller_wallet.assetCode,
+                "assetScale": self.seller_wallet.assetScale,
+            },
+        )
+
     def request_incoming_payment(self, *, amount: int | str):
         """TO THE SELLER"""
-        if isinstance(amount, int):
-            amount = str(amount)
-        # Request a grant
+        payment = self._incoming_payment_request(amount)
         grant = self.request_grant(
             grant="incoming-payment",
             actions=["create", "read", "read-all", "complete", "list"],
             endpoint=self.seller_wallet.authServer,
         )
-        grant = grant.model_dump(exclude_unset=True, mode="json")
-        access_token = grant.get("access_token", {}).get("value")
-        # Request an incoming payment
-        payment = IncomingPaymentRequest(
-            **{
-                "walletAddress": str(self.seller_wallet.id),
-                "incomingAmount": {
-                    "value": amount,
-                    "assetCode": self.seller_wallet.assetCode,
-                    "assetScale": self.seller_wallet.assetScale,
-                },
-            }
-        )
+        self.pending_payment.incoming_grant = grant.model_copy(deep=True)
+        if not isinstance(grant.root, GrantResponse):
+            raise ValueError("Incoming payment grant has not issued an access token")
         return self.client.incoming_payments.post_create_payment(
             payment=payment,
             resource_server_endpoint=str(self.seller_wallet.resourceServer),
-            access_token=access_token,
+            access_token=grant.access_token.value,
         )
 
     ###################################################################################################
@@ -131,15 +133,6 @@ class OpenPaymentsProcessor:
 
     def request_quote(self, *, incoming_payment_id: str | HttpUrl | AnyUrl) -> Quote:
         """TO THE BUYER"""
-        # Request a grant
-        grant = self.request_grant(
-            grant="quote",
-            actions=["create", "read", "read-all"],
-            endpoint=self.buyer_wallet.authServer,
-        )
-        grant = grant.model_dump(exclude_unset=True, mode="json")
-        access_token = grant.get("access_token", {}).get("value")
-        # Request a quote for the payment
         quote = QuoteRequest(
             **{
                 "walletAddress": self.buyer_wallet.id,
@@ -147,10 +140,18 @@ class OpenPaymentsProcessor:
                 "method": "ilp",
             }
         )
+        grant = self.request_grant(
+            grant="quote",
+            actions=["create", "read", "read-all"],
+            endpoint=self.buyer_wallet.authServer,
+        )
+        self.pending_payment.quote_grant = grant.model_copy(deep=True)
+        if not isinstance(grant.root, GrantResponse):
+            raise ValueError("Quote grant has not issued an access token")
         return self.client.quotes.post_create_quote(
             quote=quote,
             resource_server_endpoint=str(self.buyer_wallet.resourceServer),
-            access_token=access_token,
+            access_token=grant.access_token.value,
         )
 
     ###################################################################################################
@@ -162,6 +163,7 @@ class OpenPaymentsProcessor:
         Implements the first half of the purchase process, requesting 'incoming-payment' and 'quote' grants,
         then requesting - and returning - an interactive payment grant for the buyer.
         """
+        amount = self._incoming_payment_request(amount).incomingAmount.value
         with _transaction_lock:
             if (
                 self.pending_payment.client_nonce is not None
@@ -172,8 +174,6 @@ class OpenPaymentsProcessor:
                 )
             self.pending_payment.client_nonce = secrets.token_urlsafe(32)
             self.pending_payment.grant_endpoint = str(self.buyer_wallet.authServer)
-        if isinstance(amount, int):
-            amount = str(amount)
         # 1. Request incoming payment grant for the seller
         incoming_payment_response = self.request_incoming_payment(amount=amount)
         self.pending_payment.incoming_payment_id = incoming_payment_response.id
