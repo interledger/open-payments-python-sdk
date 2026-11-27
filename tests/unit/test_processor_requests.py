@@ -2,6 +2,7 @@
 
 import copy
 import json
+import traceback
 from types import SimpleNamespace
 
 import httpx
@@ -114,13 +115,19 @@ def invoke(processor, resource):
 
 
 @pytest.mark.parametrize("resource", ["incoming", "quote"])
+@pytest.mark.parametrize("expires_in", [None, 1, 2**63])
 def test_approved_grants_are_saved_before_signed_resource_creation(
-    context, resource, keyid_private_key, monkeypatch
+    context, resource, keyid_private_key, monkeypatch, expires_in
 ):
     processor, http = context.processor, context.http
+    approved = copy.deepcopy(APPROVED)
+    if expires_in is None:
+        del approved["access_token"]["expires_in"]
+    else:
+        approved["access_token"]["expires_in"] = expires_in
     payload = INCOMING if resource == "incoming" else QUOTE
     http.responses.extend(
-        [httpx.Response(200, json=APPROVED), httpx.Response(201, json=payload)]
+        [httpx.Response(200, json=approved), httpx.Response(201, json=payload)]
     )
     received = []
     request_grant = processor.request_grant
@@ -136,7 +143,7 @@ def test_approved_grants_are_saved_before_signed_resource_creation(
     def check_saved(request):
         if request.url.path.endswith(("/incoming-payments", "/quotes")):
             saved = getattr(processor.pending_payment, resource + "_grant")
-            assert saved.model_dump(mode="json") == APPROVED
+            assert saved.model_dump(mode="json", exclude_unset=True) == approved
         return send(request)
 
     monkeypatch.setattr(http.client, "send", check_saved)
@@ -180,10 +187,42 @@ def test_approved_grants_are_saved_before_signed_resource_creation(
     restored = PendingIncomingPaymentTransaction.model_validate_json(
         processor.pending_payment.model_dump_json()
     )
-    assert getattr(restored, resource + "_grant").model_dump(mode="json") == APPROVED
+    assert (
+        getattr(restored, resource + "_grant").model_dump(
+            mode="json", exclude_unset=True
+        )
+        == approved
+    )
     assert TOKEN not in repr(restored) and CONTINUE["access_token"][
         "value"
     ] not in repr(restored)
+
+
+@pytest.mark.parametrize("resource", ["incoming", "quote"])
+@pytest.mark.parametrize("expires_in", [0, -1, -(2**63)])
+def test_expired_issued_grants_are_retained_without_resource_creation(
+    context, resource, expires_in
+):
+    field = resource + "_grant"
+    setattr(context.processor.pending_payment, field, Grant.model_validate(APPROVED))
+    expired = copy.deepcopy(APPROVED)
+    expired["access_token"]["expires_in"] = expires_in
+    expired["access_token"]["value"] = "expired-issued-resource-secret"
+    context.http.responses.append(httpx.Response(200, json=expired))
+
+    with pytest.raises(ValueError, match="Issued access token has expired") as caught:
+        invoke(context.processor, resource)
+
+    restored = PendingIncomingPaymentTransaction.model_validate_json(
+        context.processor.pending_payment.model_dump_json(exclude_unset=True)
+    )
+    assert (
+        getattr(restored, field).model_dump(mode="json", exclude_unset=True) == expired
+    )
+    assert len(context.http.requests) == 3
+    error = "".join(traceback.format_exception(caught.value))
+    assert expired["access_token"]["value"] not in error
+    assert CONTINUE["access_token"]["value"] not in error
 
 
 @pytest.mark.parametrize("resource", ["incoming", "quote"])
@@ -366,6 +405,40 @@ def payment_responses(incoming, quote, outgoing=PENDING):
         httpx.Response(201, json=quote),
         httpx.Response(200, json=outgoing),
     ]
+
+
+@pytest.mark.parametrize("resource", ["incoming", "quote"])
+@pytest.mark.parametrize("expires_in", [0, -1])
+def test_expired_initial_tokens_preserve_initiation_state_without_restart(
+    context, resource, expires_in
+):
+    count = 1 if resource == "incoming" else 3
+    responses = payment_responses(INCOMING, QUOTE)[:count]
+    payload = responses[-1].json()
+    payload["access_token"]["expires_in"] = expires_in
+    responses[-1] = httpx.Response(200, json=payload)
+    context.http.responses.extend(responses)
+
+    with pytest.raises(ValueError, match="Issued access token has expired"):
+        context.processor.initiate_payment(amount="1000")
+
+    state = PendingIncomingPaymentTransaction.model_validate_json(
+        context.processor.pending_payment.model_dump_json(exclude_unset=True)
+    )
+    assert state.client_nonce and state.grant_endpoint == BUYER_AUTH
+    assert state.incoming_amount.value == "1000" and not state.completion_started
+    assert getattr(state, resource + "_grant").model_dump(mode="json") == payload
+    assert state.quote is None and state.outgoing_grant is None
+    if resource == "incoming":
+        assert state.incoming_payment is None and state.incoming_payment_id is None
+    else:
+        assert state.incoming_payment.id == state.incoming_payment_id
+    before = state.model_dump_json()
+    context.processor.pending_payment = state
+    with pytest.raises(ValueError, match="initiation already started"):
+        context.processor.initiate_payment(amount="1000")
+    assert state.model_dump_json() == before
+    assert len(context.http.requests) == 2 + count
 
 
 @pytest.mark.parametrize("entrypoint", ["initiate_payment", "get_purchase_endpoint"])

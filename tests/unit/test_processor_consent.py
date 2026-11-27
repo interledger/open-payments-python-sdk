@@ -462,6 +462,59 @@ def updated_continuation_payload():
     return payload
 
 
+@pytest.mark.parametrize("expires_in", [None, 1, 2**63])
+def test_usable_continuation_tokens_allow_outgoing_creation(
+    initiated_payment, expires_in
+):
+    payload = updated_continuation_payload()
+    if expires_in is None:
+        del payload["access_token"]["expires_in"]
+    else:
+        payload["access_token"]["expires_in"] = expires_in
+    initiated_payment.http.responses.extend(
+        [httpx.Response(200, json=payload), outgoing_response()]
+    )
+
+    result = complete(initiated_payment)
+
+    assert str(result.id) == OUTGOING_ID
+    assert initiated_payment.http.requests[-1].headers["Authorization"] == (
+        "GNAP " + ACCESS_TOKEN
+    )
+    assert (
+        initiated_payment.pending.continuation_response.model_dump(
+            mode="json", exclude_unset=True
+        )
+        == payload
+    )
+
+
+@pytest.mark.parametrize("expires_in", [0, -1, -(2**63)])
+def test_expired_continuation_tokens_retain_replacement_credentials_and_claim(
+    initiated_payment, expires_in
+):
+    payload = updated_continuation_payload()
+    payload["access_token"]["expires_in"] = expires_in
+    initiated_payment.http.responses.append(httpx.Response(200, json=payload))
+
+    with pytest.raises(ValueError, match="Issued access token has expired") as caught:
+        complete(initiated_payment)
+
+    restored = PendingIncomingPaymentTransaction.model_validate_json(
+        initiated_payment.pending.model_dump_json(exclude_unset=True)
+    )
+    assert restored.continuation_response.model_dump(mode="json") == payload
+    assert str(restored.continue_url) == payload["continue"]["uri"]
+    assert restored.continue_id == payload["continue"]["access_token"]["value"]
+    assert restored.completion_started and restored.outgoing_payment is None
+    assert len(initiated_payment.http.requests) == 4
+    error = "".join(traceback.format_exception(caught.value))
+    assert ACCESS_TOKEN not in error and restored.continue_id not in error
+    with pytest.raises(ValueError, match="completion already started"):
+        complete(initiated_payment, pending_payment=restored)
+    assert len(initiated_payment.http.requests) == 4
+
+
 def test_completion_snapshots_credentials_and_outgoing_result_survive_recovery(
     initiated_payment, monkeypatch
 ):

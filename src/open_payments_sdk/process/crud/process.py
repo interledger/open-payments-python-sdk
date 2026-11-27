@@ -9,7 +9,12 @@ from ...errors import ConfigurationError
 from ...http import HttpClient, HttpClientProtocol
 from ...client.client import OpenPaymentsClient
 from ...api.auth import GrantRequest, Grant, InteractRef
-from ...models.auth import Finish, GrantResponse, InteractionInstructionsResponse
+from ...models.auth import (
+    AccessToken,
+    Finish,
+    GrantResponse,
+    InteractionInstructionsResponse,
+)
 from ...models.wallet import WalletAddress
 from ...models.resource import (
     IncomingPaymentRequest,
@@ -22,6 +27,12 @@ from ...utils.parser import paymentsparser
 from ..models.process import OpenPaymentAccount, PendingPayment
 
 _transaction_lock = Lock()
+
+
+def _check_issued_token_expiry(token: AccessToken) -> None:
+    """Reject an already expired token before its immediate resource request."""
+    if token.expires_in is not None and token.expires_in <= 0:
+        raise ValueError("Issued access token has expired")
 
 
 class OpenPaymentsProcessor:
@@ -229,6 +240,7 @@ class OpenPaymentsProcessor:
         self.pending_payment.incoming_grant = grant.model_copy(deep=True)
         if not isinstance(grant.root, GrantResponse):
             raise ValueError("Incoming payment grant has not issued an access token")
+        _check_issued_token_expiry(grant.access_token)
         return self.client.incoming_payments.post_create_payment(
             payment=payment,
             resource_server_endpoint=str(self.recipient_wallet.resourceServer),
@@ -257,6 +269,7 @@ class OpenPaymentsProcessor:
         self.pending_payment.quote_grant = grant.model_copy(deep=True)
         if not isinstance(grant.root, GrantResponse):
             raise ValueError("Quote grant has not issued an access token")
+        _check_issued_token_expiry(grant.access_token)
         return self.client.quotes.post_create_quote(
             quote=quote,
             resource_server_endpoint=str(self.sender_wallet.resourceServer),
@@ -461,6 +474,7 @@ class OpenPaymentsProcessor:
             raise ValueError(
                 "Grant continuation has not issued an outgoing payment access token"
             )
+        _check_issued_token_expiry(grant_request.access_token)
         access_token = grant_request.access_token.value
         # Create the outgoing payment from the sender's wallet
         payment = self.client.outgoing_payments.post_create_payment(
