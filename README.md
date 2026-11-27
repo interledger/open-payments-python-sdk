@@ -53,6 +53,14 @@ poetry install
 poetry run python -m pytest -ra
 ```
 
+The offline payment-flow scenarios exercise discovery, incoming-payment and quote creation, interaction callbacks, JSON state restoration and outgoing creation with distinct sender and recipient assets. They cover approved, pending, denied, expired and uncertain completion outcomes, reject replay after recovery, and exercise resource reconciliation, listing and token management. Run them without provider credentials or browser dependencies:
+
+```bash
+poetry run python -m pytest tests/process/test_payment_flow.py -ra
+```
+
+These scenarios use synthetic HTTP responses and a published callback-hash vector; they provide no evidence of settlement with a live provider.
+
 Live tests use only accounts you configure. Install their optional dependencies, copy `tests/.env.example` to `tests/.env`, and fill in the wallet and registered key values before opting in:
 
 ```bash
