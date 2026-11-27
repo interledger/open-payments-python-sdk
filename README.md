@@ -477,6 +477,38 @@ Creation appends `/quotes` before any base-URL query, trimming trailing path sla
 
 The existing `post_create_quote(quote, resource_server_endpoint, access_token)` and `get_quote(quote_id, resource_server_endpoint, access_token)` helpers keep their parameter names and order and delegate to these methods. Their conventional paths preserve any base query before appended suffixes.
 
+## Outgoing payment operations
+
+Create an outgoing payment using the sender wallet's resource-server base URL and an `OutgoingPaymentRequest`. Supply a quote ID, or an incoming-payment ID together with a debit amount. Use the complete returned payment ID for subsequent reads:
+
+```python
+from open_payments_sdk import OpenPaymentsClient
+from open_payments_sdk.models.resource import OutgoingPaymentRequest
+
+with OpenPaymentsClient(
+    keyid=key_pair.jwks.keys[0].kid,
+    private_key=key_pair.private_key_pem,
+) as client:
+    created_payment = client.outgoing_payments.create(
+        url=wallet.resourceServer,
+        payment=OutgoingPaymentRequest(
+            walletAddress=wallet.id,
+            quoteId=current_quote.id,
+        ),
+        access_token=create_payment_access_token,
+    )
+    current_payment = client.outgoing_payments.get(
+        url=created_payment.id,
+        access_token=read_payment_access_token,
+    )
+```
+
+For creation without a quote, replace `quoteId` with `incomingPayment=incoming_payment.id` and `debitAmount=Amount(value="1000", assetCode=wallet.assetCode, assetScale=wallet.assetScale)`, importing `Amount` from the same models module. The model rejects missing or conflicting sources. Creation exports the required model once, appends `/outgoing-payments` before any base query and expects HTTP 201. Retrieval uses the complete opaque HTTP(S) resource URL, sends a signed bodyless GET and expects HTTP 200. Both methods accept strings, `AnyUrl` and `httpx.URL`; base-path trailing slashes are trimmed only when appending the collection path. Each call uses its supplied access token and rejects signed redirects without replay.
+
+Creation returns `OutgoingPaymentWithSpentAmounts`, including optional grant-spent amounts and permitted provider extensions. Retrieval returns the specified plain `OutgoingPayment` and rejects extra response fields. Both operations apply the same sending-asset, numeric sent/debit and failure-state checks as listing. Consistent pending, fully paid and partly failed responses are accepted, including immediately after creation. Receiving assets may differ from sending assets, and original amount strings are preserved.
+
+The existing `post_create_payment(payment, resource_server_endpoint, access_token)` and `get_outgoing_payment(payment_id, resource_server_endpoint, access_token)` helpers retain their parameter names and order and delegate to these methods. Their conventional paths preserve base queries. The old getter validates the plain wire response first, then preserves its existing `OutgoingPaymentWithSpentAmounts` Python return type with absent optional spent fields. Fields omitted by the server stay unset in the adapted model.
+
 ## SDK operation errors
 
 Synchronous wallet, grant, token and payment operations raise subclasses of `OpenPaymentsError` from `open_payments_sdk.errors`: `ConfigurationError`, `InputError`, `SigningError`, `TransportError`, `TransportTimeoutError`, `HTTPError` or `ResponseError`. Direct Pydantic model construction and standalone cryptography helpers retain their existing exceptions. A timeout is also a transport error; it does not establish whether the server completed a payment. The SDK does not retry failed calls.

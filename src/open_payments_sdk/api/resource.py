@@ -302,18 +302,15 @@ class OutgoingPayments(SecurityBase):
         self.http_client = http_client
 
     @_sdk_operation("outgoing_payments.create")
-    def post_create_payment(
+    def create(
         self,
+        url: UrlInput,
         payment: OutgoingPaymentRequest,
-        resource_server_endpoint: str,
         access_token: str,
     ) -> OutgoingPaymentWithSpentAmounts:
-        """
-        Create an Outgoing Payment Resource
-        """
-        base_url = resource_server_endpoint.rstrip("/")
-        url = f"{base_url}/outgoing-payments"
-        return _execute_request(
+        """Create from a quote or incoming payment under a resource-server base."""
+        url = _append_url_path(url, "/outgoing-payments", strip_trailing_slashes=True)
+        result = _execute_request(
             self.http_client,
             "POST",
             url,
@@ -324,6 +321,17 @@ class OutgoingPayments(SecurityBase):
             signer=self,
             expected_status=201,
         )
+        return _validate_outgoing_payment(result, method="POST", url=url, status=201)
+
+    @_sdk_operation("outgoing_payments.create")
+    def post_create_payment(
+        self,
+        payment: OutgoingPaymentRequest,
+        resource_server_endpoint: str,
+        access_token: str,
+    ) -> OutgoingPaymentWithSpentAmounts:
+        """Compatibility adapter retaining payment/endpoint/token argument order."""
+        return self.create(resource_server_endpoint, payment, access_token)
 
     @_sdk_operation("outgoing_payments.list")
     def list(
@@ -359,21 +367,32 @@ class OutgoingPayments(SecurityBase):
         return self.list(resource_server_endpoint, query, access_token)
 
     @_sdk_operation("outgoing_payments.get")
-    def get_outgoing_payment(
-        self, payment_id: str, resource_server_endpoint: str, access_token: str
-    ) -> OutgoingPaymentWithSpentAmounts:
-        """
-        Get Outgoing Payment
-        """
-        base_url = resource_server_endpoint
-        url = f"{base_url}/outgoing-payments/{payment_id}"
-        return _execute_request(
+    def get(self, url: UrlInput, access_token: str) -> OutgoingPayment:
+        """Read the specified plain payment response from its complete resource URL."""
+        url = validate_request_url(url)
+        result = _execute_request(
             self.http_client,
             "GET",
             url,
-            OutgoingPaymentWithSpentAmounts,
+            OutgoingPayment,
             access_token=access_token,
             signer=self,
+        )
+        return _validate_outgoing_payment(result, method="GET", url=url, status=200)
+
+    @_sdk_operation("outgoing_payments.get")
+    def get_outgoing_payment(
+        self, payment_id: str, resource_server_endpoint: str, access_token: str
+    ) -> OutgoingPaymentWithSpentAmounts:
+        """Validate the plain wire result while retaining the legacy Python result type."""
+        url = _append_url_path(
+            resource_server_endpoint,
+            f"/outgoing-payments/{payment_id}",
+            strip_trailing_slashes=True,
+        )
+        result = self.get(url, access_token)
+        return OutgoingPaymentWithSpentAmounts.model_validate(
+            result.model_dump(mode="python", exclude_unset=True)
         )
 
 
