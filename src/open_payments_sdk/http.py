@@ -6,8 +6,9 @@ from threading import Lock
 from typing import Any, Callable, Protocol, Sequence, TypeVar, overload
 from urllib.parse import unquote_plus, urljoin, urlsplit
 
+import anyio
 import httpx
-from httpx import Client, Request, Response
+from httpx import AsyncClient, Client, Request, Response
 from pydantic import BaseModel, ValidationError
 from rfc3986_validator import validate_rfc3986
 
@@ -539,6 +540,34 @@ def _timeout(value: float | httpx.Timeout | None) -> httpx.Timeout:
     return timeout
 
 
+def _build_http_request(
+    http_timeout: float | httpx.Timeout | None,
+    method: str,
+    url: str,
+    headers=None,
+    data=None,
+    json: dict | None = None,
+    params: dict | None = None,
+) -> Request:
+    timeout = _timeout(http_timeout)
+    try:
+        return Request(
+            method=method,
+            url=url,
+            headers=headers,
+            json=json,
+            data=data,
+            params=params,
+            extensions={"timeout": timeout.as_dict()},
+        )
+    except (httpx.InvalidURL, ValueError, TypeError):
+        raise InputError(
+            method=method if method in ("GET", "POST", "DELETE") else None,
+            url=url,
+            reason="request",
+        ) from None
+
+
 class _RequestBuilder(Protocol):
     def build_request(
         self,
@@ -634,23 +663,9 @@ class HttpClient(HttpClientProtocol):
         params: dict | None = None,
     ) -> Request:
         self._check_open()
-        timeout = _timeout(self.http_timeout)
-        try:
-            return Request(
-                method=method,
-                url=url,
-                headers=headers,
-                json=json,
-                data=data,
-                params=params,
-                extensions={"timeout": timeout.as_dict()},
-            )
-        except (httpx.InvalidURL, ValueError, TypeError):
-            raise InputError(
-                method=method if method in ("GET", "POST", "DELETE") else None,
-                url=url,
-                reason="request",
-            ) from None
+        return _build_http_request(
+            self.http_timeout, method, url, headers, data, json, params
+        )
 
     def send(self, request: Request) -> Response:
         client = self._get_client()
@@ -660,6 +675,124 @@ class HttpClient(HttpClientProtocol):
             # A no-op Auth also prevents HTTPX from deriving Basic credentials
             # from URL userinfo. Preserve the exact prepared GNAP request.
             return _send(client, request, auth=httpx.Auth(), follow_redirects=False)
+        except RuntimeError:
+            if client.is_closed:
+                raise ConfigurationError(
+                    reason="closed", method=request.method, url=request.url
+                ) from None
+            raise
+
+
+class AsyncHttpClient(AsyncHttpClientProtocol):
+    """Reusable native async transport with owned or borrowed HTTPX connections.
+
+    The owned pool is allocated on first send. Use this transport within one
+    async backend/event loop and finish active sends before awaiting aclose().
+    The task initiating owned cleanup joins it before cancellation propagates.
+    Borrowed clients remain open. Closing never replays requests.
+    """
+
+    def __init__(
+        self,
+        http_timeout: float | httpx.Timeout | None,
+        *,
+        client: httpx.AsyncClient | None = None,
+    ):
+        _timeout(http_timeout)
+        if client is not None and not isinstance(client, httpx.AsyncClient):
+            raise ConfigurationError(reason="http_client")
+        self.http_timeout = http_timeout
+        self._client = client
+        self._owns_client = client is None
+        self._closed = False
+        self._lifecycle_lock = Lock()
+        self._close_done: anyio.Event | None = None
+        self._close_error: BaseException | None = None
+
+    @property
+    def is_closed(self) -> bool:
+        with self._lifecycle_lock:
+            return self._closed or (self._client is not None and self._client.is_closed)
+
+    def _check_open(self) -> None:
+        if self.is_closed:
+            raise ConfigurationError(reason="closed")
+
+    def _get_client(self) -> httpx.AsyncClient:
+        # No await while constructing the pool or updating lifecycle state.
+        with self._lifecycle_lock:
+            if self._closed or (self._client is not None and self._client.is_closed):
+                raise ConfigurationError(reason="closed")
+            if self._client is None:
+                try:
+                    self._client = AsyncClient(
+                        timeout=_timeout(self.http_timeout), follow_redirects=False
+                    )
+                except (httpx.InvalidURL, ValueError, TypeError, OSError, ImportError):
+                    raise ConfigurationError(reason="http_client") from None
+            return self._client
+
+    async def _finish_close(self, client: httpx.AsyncClient, done: anyio.Event) -> None:
+        # A structured child lets its parent receive direct asyncio task
+        # cancellation while still joining this shielded cleanup on exit.
+        with anyio.CancelScope(shield=True):
+            try:
+                await client.aclose()
+            except BaseException as error:
+                self._close_error = error
+            finally:
+                done.set()
+
+    async def aclose(self) -> None:
+        """Close an owned pool once; concurrent callers join the same cleanup."""
+        client = None
+        with self._lifecycle_lock:
+            if not self._closed:
+                self._closed = True
+                if self._owns_client and self._client is not None:
+                    client = self._client
+                    self._close_done = anyio.Event()
+            done = self._close_done
+        if done is None:
+            return
+        with anyio.CancelScope(shield=True):
+            if client is not None:
+                async with anyio.create_task_group() as tasks:
+                    tasks.start_soon(self._finish_close, client, done)
+            else:
+                await done.wait()
+        if self._close_error is not None:
+            raise self._close_error
+
+    async def __aenter__(self) -> "AsyncHttpClient":
+        self._check_open()
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, exc_traceback) -> None:
+        await self.aclose()
+
+    def build_request(
+        self,
+        method: str,
+        url: str,
+        headers=None,
+        data=None,
+        json: dict | None = None,
+        params: dict | None = None,
+    ) -> Request:
+        self._check_open()
+        return _build_http_request(
+            self.http_timeout, method, url, headers, data, json, params
+        )
+
+    async def send(self, request: Request) -> Response:
+        client = self._get_client()
+        if "timeout" not in request.extensions:
+            request.extensions["timeout"] = _timeout(self.http_timeout).as_dict()
+        try:
+            return await _async_send(
+                client, request, auth=httpx.Auth(), follow_redirects=False
+            )
         except RuntimeError:
             if client.is_closed:
                 raise ConfigurationError(

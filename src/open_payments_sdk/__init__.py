@@ -29,7 +29,12 @@ from open_payments_sdk.errors import (
     TransportTimeoutError,
     ValidationIssue,
 )
-from open_payments_sdk.http import HttpClient, HttpClientProtocol
+from open_payments_sdk.http import (
+    AsyncHttpClient,
+    AsyncHttpClientProtocol,
+    HttpClient,
+    HttpClientProtocol,
+)
 from open_payments_sdk.utils.urls import (
     UrlInput,
     normalize_wallet_address,
@@ -42,6 +47,8 @@ __all__ = [
     "OpenPaymentsClient",
     "UnauthenticatedClient",
     "Configuration",
+    "AsyncHttpClient",
+    "AsyncHttpClientProtocol",
     "HttpClient",
     "HttpClientProtocol",
     "ConfigurationError",

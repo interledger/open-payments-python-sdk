@@ -307,6 +307,27 @@ SDK requests use their prepared URL, body and headers without merging native-cli
 
 All synchronous wallet, grant, token and payment methods share one request pipeline. Each supplied body/query model is exported once with its existing aliases and omission rules, then HTTPX prepares the final URL and JSON bytes. The SDK calculates the content digest and signs that prepared request before sending it to the shared response handler. Tokens remain call-local and covered request data is preserved during dispatch.
 
+For native async HTTP I/O, use `AsyncHttpClient` with `async with` or `await transport.aclose()`. It prepares requests synchronously and awaits HTTPX dispatch. The pool is allocated on first send and reused; the timeout and prepared-request isolation rules above also apply. Use each transport within one async backend/event loop, and finish active sends before closing it. Asyncio and Trio are supported; applications choosing Trio must install it. For example, this public HTTP request needs no signing key:
+
+```python
+import asyncio
+from open_payments_sdk import AsyncHttpClient
+
+async def main():
+    async with AsyncHttpClient(http_timeout=10.0) as transport:
+        request = transport.build_request(
+            "GET", "https://wallet.example/alice",
+            headers={"Accept": "application/json"},
+        )
+        response = await transport.send(request)
+        return response.json()
+
+# In an async application, await main() from the existing event loop.
+# asyncio.run(main()) is suitable for a standalone script.
+```
+
+`AsyncHttpClient(http_timeout=10.0, client=native_async_client)` borrows an existing `httpx.AsyncClient` and leaves it open when the wrapper closes. Owned cleanup is performed once, and its initiating task joins it before cancellation propagates. Concurrent close calls share that cleanup; a cleanup failure propagates on subsequent close calls too. Cancellation of a send propagates without retries or an automatic pool close. A cancelled payment request can still have an uncertain provider outcome and must be reconciled before another write. `AsyncHttpClientProtocol` describes the synchronous `build_request()` and async `send()` methods for a caller-owned async transport.
+
 Body/query arguments must match the operation's SDK request model, except that `grants.request` also accepts a mapping and validates it as a `GrantRequest`. Other invalid body/query values, including `None`, raw dictionaries and unrelated models, raise `InputError` before their fields are serialized. Required access tokens must be strings; invalid values raise `InputError` before dispatch. An empty polling model such as `InteractRef()` sends a signed `{}` JSON body; bodyless operations send no JSON payload.
 
 ## Initial grant requests

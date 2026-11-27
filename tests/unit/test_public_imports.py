@@ -47,7 +47,15 @@ def test_root_and_client_package_exports_preserve_original_class_identity():
     "module,names",
     [
         ("open_payments_sdk.configuration", ["Configuration"]),
-        ("open_payments_sdk.http", ["HttpClient", "HttpClientProtocol"]),
+        (
+            "open_payments_sdk.http",
+            [
+                "HttpClient",
+                "HttpClientProtocol",
+                "AsyncHttpClient",
+                "AsyncHttpClientProtocol",
+            ],
+        ),
         (
             "open_payments_sdk.utils.urls",
             [
