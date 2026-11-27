@@ -393,14 +393,9 @@ class Quotes(SecurityBase):
         self.http_client = http_client
 
     @_sdk_operation("quotes.create")
-    def post_create_quote(
-        self, quote: QuoteRequest, resource_server_endpoint: str, access_token: str
-    ) -> Quote:
-        """
-        Create a Quote
-        """
-        base_url = resource_server_endpoint.rstrip("/")
-        url = f"{base_url}/quotes"
+    def create(self, url: UrlInput, quote: QuoteRequest, access_token: str) -> Quote:
+        """Create one of the specified quote forms under a resource-server base."""
+        url = _append_url_path(url, "/quotes", strip_trailing_slashes=True)
         return _execute_request(
             self.http_client,
             "POST",
@@ -413,20 +408,33 @@ class Quotes(SecurityBase):
             expected_status=201,
         )
 
-    @_sdk_operation("quotes.get")
-    def get_quote(
-        self, quote_id: str, resource_server_endpoint: str, access_token: str
+    @_sdk_operation("quotes.create")
+    def post_create_quote(
+        self, quote: QuoteRequest, resource_server_endpoint: str, access_token: str
     ) -> Quote:
-        """
-        Get a Quote
-        """
-        base_url = resource_server_endpoint.rstrip("/")
-        url = f"{base_url}/quotes/{quote_id}"
+        """Compatibility adapter retaining quote/endpoint/token argument order."""
+        return self.create(resource_server_endpoint, quote, access_token)
+
+    @_sdk_operation("quotes.get")
+    def get(self, url: UrlInput, access_token: str) -> Quote:
+        """Read a quote using its complete returned resource URL."""
         return _execute_request(
             self.http_client,
             "GET",
-            url,
+            validate_request_url(url),
             Quote,
             access_token=access_token,
             signer=self,
         )
+
+    @_sdk_operation("quotes.get")
+    def get_quote(
+        self, quote_id: str, resource_server_endpoint: str, access_token: str
+    ) -> Quote:
+        """Compatibility adapter retaining conventional base/path/ID construction."""
+        url = _append_url_path(
+            resource_server_endpoint,
+            f"/quotes/{quote_id}",
+            strip_trailing_slashes=True,
+        )
+        return self.get(url, access_token)

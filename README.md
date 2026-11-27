@@ -439,6 +439,44 @@ Each call returns one validated `PaginatedIncomingPayments` or `PaginatedOutgoin
 
 Base URLs accept HTTP(S) strings, `AnyUrl` and `httpx.URL`. The SDK appends `/incoming-payments` or `/outgoing-payments` before any query, trimming trailing base-path slashes. Provider query components retain their original escaping, order, duplicate keys and empty components. `PaymentListQuery` controls `wallet-address`, `cursor`, `first` and `last`: existing values for those fields, including the `walletAddress` alias and percent-encoded names, are replaced or removed according to the model. This keeps stale URL filters from overriding the requested wallet or page direction. The model is exported once and the final composed URL is signed before sending.
 
+## Quote operations
+
+Use `quotes.create(url, quote, access_token)` with the sender's resource-server base URL and a `QuoteRequest`. For a fixed debit amount, use the sender wallet's asset information:
+
+```python
+from open_payments_sdk import OpenPaymentsClient
+from open_payments_sdk.models.resource import Amount, QuoteRequest
+
+with OpenPaymentsClient(
+    keyid=key_pair.jwks.keys[0].kid,
+    private_key=key_pair.private_key_pem,
+) as client:
+    quoted = client.quotes.create(
+        url=wallet.resourceServer,
+        quote=QuoteRequest(
+            walletAddress=wallet.id,
+            receiver=incoming_payment.id,
+            method="ilp",
+            debitAmount=Amount(
+                value="1000",
+                assetCode=wallet.assetCode,
+                assetScale=wallet.assetScale,
+            ),
+        ),
+        access_token=create_quote_access_token,
+    )
+    current_quote = client.quotes.get(
+        url=quoted.id,
+        access_token=read_quote_access_token,
+    )
+```
+
+For a fixed receive amount, supply only `receiveAmount` with the receiver's asset information. Omit both amount fields to let the server infer the amount from the incoming payment. The SDK sends one creation request and does not fetch the receiver to infer an amount. The existing model guards reject conflicting amount directions and invalid protocol fields.
+
+Creation appends `/quotes` before any base-URL query, trimming trailing path slashes. Retrieval accepts the complete returned HTTP(S) quote URL, including opaque provider paths, escaped identifiers and queries. Both methods also accept `AnyUrl` and `httpx.URL`. Creation serializes its required model once and expects HTTP 201; retrieval sends a signed bodyless GET and expects HTTP 200. Both return `Quote` with required debit/receive amounts, independent asset information and the specified optional expiry string. Receiver fields keep the pinned v1.5.1 receiver contract described below. Signed redirects are rejected without replaying the request.
+
+The existing `post_create_quote(quote, resource_server_endpoint, access_token)` and `get_quote(quote_id, resource_server_endpoint, access_token)` helpers keep their parameter names and order and delegate to these methods. Their conventional paths preserve any base query before appended suffixes.
+
 ## SDK operation errors
 
 Synchronous wallet, grant, token and payment operations raise subclasses of `OpenPaymentsError` from `open_payments_sdk.errors`: `ConfigurationError`, `InputError`, `SigningError`, `TransportError`, `TransportTimeoutError`, `HTTPError` or `ResponseError`. Direct Pydantic model construction and standalone cryptography helpers retain their existing exceptions. A timeout is also a transport error; it does not establish whether the server completed a payment. The SDK does not retry failed calls.
