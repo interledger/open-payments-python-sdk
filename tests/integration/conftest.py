@@ -17,16 +17,18 @@ def wallet_address_server(live_settings):
 
 @pytest.fixture
 def wallet_client():
-    return Wallet(HttpClient(http_timeout=10.0))
+    with HttpClient(http_timeout=10.0) as transport:
+        yield Wallet(transport)
 
 
 @pytest.fixture
 def op_client(op_seller_account):
-    return OpenPaymentsClient(
+    with OpenPaymentsClient(
         keyid=op_seller_account.keyId,
         private_key=op_seller_account.privateKey,
         client_wallet_address=op_seller_account.walletAddressUrl,
-    )
+    ) as client:
+        yield client
 
 
 @pytest.fixture

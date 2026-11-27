@@ -75,7 +75,7 @@ poetry install --with live,browser
 poetry run python -m pytest tests/process --run-live --run-browser -ra
 ```
 
-Tests with missing optional dependencies or configuration report skips. The incoming-payment cases still provide the contributed scaffold; complete endpoint assertions remain follow-up work. The unimplemented interactive-grant case is explicitly reported as skipped.
+Tests with missing optional dependencies or configuration report skips. Incoming-payment tests request a grant and create an unfunded resource for each create/get/list/complete scenario, using the configured wallet's assets and an expiry ten minutes ahead. Listing searches at most five pages of 100 payments. Grants are cancelled during teardown, including when a provider requires interaction; such interactive incoming grants report a skip. These tests create provider records but do not send funds. The unimplemented interactive-grant case is still explicitly reported as skipped.
 
 The peer-to-peer example uses `poetry install --with examples`. Optional notebook tooling requires Python 3.11.5 or newer so it can use patched dependencies:
 
