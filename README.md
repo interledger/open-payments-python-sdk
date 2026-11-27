@@ -400,6 +400,45 @@ These methods accept HTTP(S) strings, `AnyUrl` or `httpx.URL` values. `create` t
 
 Creation and private reads return `IncomingPaymentResponse` with methods and optional metadata; completion returns `IncomingPayment` and validates its completed state. See the incoming-payment model section for the amount and state checks. The existing `post_create_payment(payment, resource_server_endpoint, access_token)`, `get_incoming_payment(payment_id, resource_server_endpoint, access_token)` and `post_complete_incoming_payment(payment_id, resource_server_endpoint, access_token)` helpers keep their parameter names and order and delegate to these operations. Their conventional paths also preserve base-URL queries before appended route suffixes.
 
+## Payment listing operations
+
+Both authenticated payment clients expose `list(url, query, access_token)`. Supply the resource-server base URL and a `PaymentListQuery` for the wallet and desired page direction:
+
+```python
+from open_payments_sdk import OpenPaymentsClient
+from open_payments_sdk.models.resource import PaymentListQuery
+
+with OpenPaymentsClient(
+    keyid=key_pair.jwks.keys[0].kid,
+    private_key=key_pair.private_key_pem,
+) as client:
+    query = PaymentListQuery(walletAddress=wallet.id, first=25)
+    incoming_page = client.incoming_payments.list(
+        url=wallet.resourceServer,
+        query=query,
+        access_token=incoming_list_access_token,
+    )
+    outgoing_page = client.outgoing_payments.list(
+        url=wallet.resourceServer,
+        query=query,
+        access_token=outgoing_list_access_token,
+    )
+    if incoming_page.pagination.hasNextPage and incoming_page.pagination.endCursor is not None:
+        next_incoming_page = client.incoming_payments.list(
+            url=wallet.resourceServer,
+            query=PaymentListQuery(
+                walletAddress=wallet.id,
+                first=25,
+                cursor=incoming_page.pagination.endCursor,
+            ),
+            access_token=incoming_list_access_token,
+        )
+```
+
+Each call returns one validated `PaginatedIncomingPayments` or `PaginatedOutgoingPayments` page. The application makes any next-page request explicitly. `last` selects backward pagination. The existing `get_incoming_payments(query, resource_server_endpoint, access_token)` and `get_outgoing_payments(query, resource_server_endpoint, access_token)` helpers retain their parameter names and order and delegate to `list`.
+
+Base URLs accept HTTP(S) strings, `AnyUrl` and `httpx.URL`. The SDK appends `/incoming-payments` or `/outgoing-payments` before any query, trimming trailing base-path slashes. Provider query components retain their original escaping, order, duplicate keys and empty components. `PaymentListQuery` controls `wallet-address`, `cursor`, `first` and `last`: existing values for those fields, including the `walletAddress` alias and percent-encoded names, are replaced or removed according to the model. This keeps stale URL filters from overriding the requested wallet or page direction. The model is exported once and the final composed URL is signed before sending.
+
 ## SDK operation errors
 
 Synchronous wallet, grant, token and payment operations raise subclasses of `OpenPaymentsError` from `open_payments_sdk.errors`: `ConfigurationError`, `InputError`, `SigningError`, `TransportError`, `TransportTimeoutError`, `HTTPError` or `ResponseError`. Direct Pydantic model construction and standalone cryptography helpers retain their existing exceptions. A timeout is also a transport error; it does not establish whether the server completed a payment. The SDK does not retry failed calls.

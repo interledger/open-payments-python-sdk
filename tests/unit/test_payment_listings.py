@@ -7,8 +7,15 @@ import traceback
 import httpx
 import pytest
 import yaml
+from pydantic import AnyUrl, BaseModel
 
-from open_payments_sdk import ResponseError, load_private_key, verify_request_signature
+from open_payments_sdk import (
+    InputError,
+    OpenPaymentsClient,
+    ResponseError,
+    load_private_key,
+    verify_request_signature,
+)
 from open_payments_sdk.models.resource import (
     IncomingPayment,
     OutgoingPayment,
@@ -439,3 +446,300 @@ def test_incoming_items_retain_partial_completed_overpaid_and_unbounded_states(
     assert [item.completed for item in result.result] == [False, True, True, False]
     assert result.result[-1].incomingAmount is None
     assert payload == before and len(http_mock.requests) == 1
+
+
+def invoke_url(client, kind, url, query, token="list-token", legacy=False):
+    resource = getattr(client, kind + "_payments")
+    if legacy:
+        return getattr(resource, "get_" + kind + "_payments")(
+            query=query, resource_server_endpoint=url, access_token=token
+        )
+    return resource.list(url=url, query=query, access_token=token)
+
+
+@pytest.mark.parametrize("kind", ["incoming", "outgoing"])
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize(
+    "base,prefix,provider",
+    [
+        (
+            "HTTPS://Resource.Example/tenant%2Fbase///?tenant=a%2fb&x=one%20two&x=%2F&flag",
+            "https://resource.example/tenant%2Fbase/",
+            "tenant=a%2fb&x=one%20two&x=%2F&flag&",
+        ),
+        ("http://[::1]:3000/tenant/?", "http://[::1]:3000/tenant/", ""),
+        ("https://resource.example/tenant///", "https://resource.example/tenant/", ""),
+        (
+            "https://resource.example/?provider=ends/",
+            "https://resource.example/",
+            "provider=ends/&",
+        ),
+    ],
+)
+def test_collection_urls_keep_provider_query_bytes_before_signed_sdk_fields(
+    op_client, http_mock, keyid_private_key, kind, legacy, base, prefix, provider
+):
+    query = PaymentListQuery(walletAddress=WALLET, cursor="opaque +/=?&%", last=2)
+    before = query.model_dump(mode="json")
+    fields_set = query.model_fields_set.copy()
+    http_mock.responses.append(httpx.Response(200, json=empty_page()))
+    result = invoke_url(op_client, kind, base, query, legacy=legacy)
+    assert not result.result
+    (request,) = http_mock.requests
+    expected_query = (
+        provider
+        + "wallet-address=https%3A%2F%2Fwallet.example%2Falice&cursor=opaque+%2B%2F%3D%3F%26%25&last=2"
+    )
+    assert str(request.url) == prefix + kind + "-payments?" + expected_query
+    assert request.url.query == expected_query.encode("ascii")
+    assert (
+        query.model_dump(mode="json") == before and query.model_fields_set == fields_set
+    )
+    assert request.headers["Authorization"] == "GNAP list-token"
+    assert request.content == b"" and "Content-Digest" not in request.headers
+    key = load_private_key(keyid_private_key["private_key"], format="pem").public_key()
+    assert verify_request_signature(
+        request, public_key=key, key_id=keyid_private_key["keyid"]
+    )
+
+
+@pytest.mark.parametrize("kind", ["incoming", "outgoing"])
+@pytest.mark.parametrize(
+    "options,tail",
+    [
+        ({}, ""),
+        ({"first": 1, "cursor": "next +/?"}, "&cursor=next+%2B%2F%3F&first=1"),
+        ({"last": 2, "cursor": None}, "&last=2"),
+    ],
+)
+def test_query_model_replaces_or_removes_stale_sdk_fields_in_base_urls(
+    op_client, http_mock, kind, options, tail
+):
+    url = (
+        BASE
+        + "/?walletAddress=wrong&wallet%2Daddress=other&cu%72sor=stale&f%69rst=99&last=88&tenant=%2f&tenant=again"
+    )
+    query = PaymentListQuery(walletAddress=WALLET, **options)
+    before = query.model_dump(mode="json")
+    http_mock.responses.append(httpx.Response(200, json=empty_page()))
+    invoke_url(op_client, kind, url, query)
+    (request,) = http_mock.requests
+    assert request.url.query == (
+        "tenant=%2f&tenant=again&wallet-address=https%3A%2F%2Fwallet.example%2Falice"
+        + tail
+    ).encode("ascii")
+    assert request.url.params.get_list("wallet-address") == [WALLET]
+    assert "walletAddress" not in request.url.params
+    assert query.model_dump(mode="json") == before
+    for field in ("cursor", "first", "last"):
+        if options.get(field) is None:
+            assert field not in request.url.params
+
+
+@pytest.mark.parametrize("kind", ["incoming", "outgoing"])
+def test_opaque_query_components_keep_raw_names_octets_order_and_empty_parts(
+    op_client, http_mock, kind
+):
+    url = BASE + "?x%2Bname=one%20two&flag&&opaque=%ff&provider=one?two&last=88"
+    http_mock.responses.append(httpx.Response(200, json=empty_page()))
+    invoke_url(op_client, kind, url, PaymentListQuery(walletAddress=WALLET))
+    assert (
+        http_mock.requests[0].url.query
+        == b"x%2Bname=one%20two&flag&&opaque=%ff&provider=one?two&wallet-address=https%3A%2F%2Fwallet.example%2Falice"
+    )
+
+
+@pytest.mark.parametrize("kind", ["incoming", "outgoing"])
+@pytest.mark.parametrize(
+    "query,prefix",
+    [
+        ("last=88&", "&"),
+        ("first=7&&cursor=stale", "&"),
+        ("&", "&&"),
+    ],
+)
+def test_empty_provider_components_survive_removal_of_stale_sdk_fields(
+    op_client, http_mock, kind, query, prefix
+):
+    http_mock.responses.append(httpx.Response(200, json=empty_page()))
+    invoke_url(
+        op_client, kind, BASE + "?" + query, PaymentListQuery(walletAddress=WALLET)
+    )
+    assert http_mock.requests[0].url.query == (
+        prefix + "wallet-address=https%3A%2F%2Fwallet.example%2Falice"
+    ).encode("ascii")
+
+
+@pytest.mark.parametrize("kind", ["incoming", "outgoing"])
+@pytest.mark.parametrize("url_type", [str, AnyUrl, httpx.URL])
+def test_native_collection_urls_serialize_the_query_and_prepare_once(
+    op_client, http_mock, monkeypatch, kind, url_type
+):
+    query = PaymentListQuery(walletAddress=WALLET, first=1)
+    original_dump = PaymentListQuery.model_dump
+    original_build = http_mock.client.build_request
+    exports, builds = [], []
+
+    def dump(self, *args, **kwargs):
+        exports.append(kwargs)
+        return original_dump(self, *args, **kwargs)
+
+    def build(**kwargs):
+        builds.append(kwargs)
+        return original_build(**kwargs)
+
+    monkeypatch.setattr(PaymentListQuery, "model_dump", dump)
+    monkeypatch.setattr(http_mock.client, "build_request", build)
+    http_mock.responses.append(httpx.Response(200, json=empty_page()))
+    invoke_url(op_client, kind, url_type(BASE + "/?tenant=%2f"), query)
+    assert exports == [{"exclude_unset": True, "mode": "json", "by_alias": True}]
+    assert len(builds) == len(http_mock.requests) == 1
+    assert (
+        http_mock.requests[0].url.query
+        == b"tenant=%2f&wallet-address=https%3A%2F%2Fwallet.example%2Falice&first=1"
+    )
+
+
+@pytest.mark.parametrize("kind", ["incoming", "outgoing"])
+@pytest.mark.parametrize(
+    "url",
+    [
+        None,
+        "/relative",
+        "$wallet.example",
+        "ftp://resource.example/pay",
+        "https://user:" + SECRET + "@resource.example/",
+        "https://resource.example/#" + SECRET,
+    ],
+)
+def test_invalid_collection_urls_fail_before_preparation(keyid_private_key, kind, url):
+    class NoIO:
+        def build_request(self, *args, **kwargs):
+            raise AssertionError("Invalid collection URL reached preparation")
+
+        def send(self, request):
+            raise AssertionError("Invalid collection URL reached dispatch")
+
+    with OpenPaymentsClient(**keyid_private_key, http_client=NoIO()) as client:
+        with pytest.raises(InputError) as caught:
+            invoke_url(client, kind, url, PaymentListQuery(walletAddress=WALLET))
+    assert (
+        caught.value.reason == "request_url"
+        and caught.value.operation == kind + "_payments.list"
+    )
+    assert SECRET not in repr(caught.value)
+
+
+class OtherListQuery(BaseModel):
+    secret: str
+
+    def model_dump(self, *args, **kwargs):
+        raise AssertionError("Unrelated query must not be serialized")
+
+
+@pytest.mark.parametrize("kind", ["incoming", "outgoing"])
+@pytest.mark.parametrize("query", [None, {}, OtherListQuery(secret=SECRET)])
+def test_canonical_lists_require_their_query_model(op_client, http_mock, kind, query):
+    with pytest.raises(InputError) as caught:
+        invoke_url(op_client, kind, BASE + "?tenant=1", query)
+    assert (
+        caught.value.reason == "query"
+        and caught.value.operation == kind + "_payments.list"
+    )
+    assert not http_mock.requests
+
+
+@pytest.mark.parametrize("kind", ["incoming", "outgoing"])
+@pytest.mark.parametrize("token", [None, 123])
+def test_canonical_list_tokens_are_validated_before_preparation(
+    keyid_private_key, kind, token
+):
+    class NoIO:
+        def build_request(self, *args, **kwargs):
+            raise AssertionError("Invalid list token reached preparation")
+
+        def send(self, request):
+            raise AssertionError("Invalid list token reached dispatch")
+
+    with OpenPaymentsClient(**keyid_private_key, http_client=NoIO()) as client:
+        with pytest.raises(InputError) as caught:
+            invoke_url(
+                client,
+                kind,
+                BASE + "?tenant=1",
+                PaymentListQuery(walletAddress=WALLET),
+                token,
+            )
+    assert (
+        caught.value.reason == "access_token"
+        and caught.value.operation == kind + "_payments.list"
+    )
+
+
+@pytest.mark.parametrize("kind", ["incoming", "outgoing"])
+@pytest.mark.parametrize("status", [200, 307])
+def test_collection_queries_ignore_native_defaults_and_never_replay_redirects(
+    keyid_private_key, kind, status
+):
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(
+            status,
+            json=empty_page(),
+            headers={"Location": "https://other.example/" + SECRET},
+        )
+
+    with httpx.Client(
+        transport=httpx.MockTransport(respond),
+        auth=("native", SECRET),
+        params={"poison": SECRET},
+        cookies={"session": SECRET},
+        headers={"X-Native": SECRET},
+        follow_redirects=True,
+    ) as native:
+        with OpenPaymentsClient(**keyid_private_key, http_client=native) as client:
+            query = PaymentListQuery(walletAddress=WALLET, first=1)
+            if status == 200:
+                assert not invoke_url(client, kind, BASE + "?tenant=%2f", query).result
+            else:
+                with pytest.raises(ResponseError) as caught:
+                    invoke_url(client, kind, BASE + "?tenant=%2f", query)
+                assert (
+                    caught.value.reason == "unexpected_status"
+                    and caught.value.status == 307
+                )
+        assert not native.is_closed
+    assert len(requests) == 1
+    assert (
+        requests[0].url.query
+        == b"tenant=%2f&wallet-address=https%3A%2F%2Fwallet.example%2Falice&first=1"
+    )
+    assert requests[0].headers["Authorization"] == "GNAP list-token"
+    assert "Cookie" not in requests[0].headers and "X-Native" not in requests[0].headers
+
+
+@pytest.mark.parametrize("kind", ["incoming", "outgoing"])
+def test_legacy_list_helpers_delegate_with_existing_keyword_order(
+    op_client, monkeypatch, kind
+):
+    resource = getattr(op_client, kind + "_payments")
+    query = PaymentListQuery(walletAddress=WALLET)
+    marker = object()
+    calls = []
+
+    def list_(url, query, access_token):
+        calls.append((url, query, access_token))
+        return marker
+
+    monkeypatch.setattr(resource, "list", list_)
+    assert (
+        getattr(resource, "get_" + kind + "_payments")(
+            query=query,
+            resource_server_endpoint=BASE + "/?tenant=1",
+            access_token="token",
+        )
+        is marker
+    )
+    assert calls == [(BASE + "/?tenant=1", query, "token")]

@@ -3,7 +3,7 @@
 from math import isfinite
 from threading import Lock
 from typing import Any, Callable, Protocol, Sequence, TypeVar, overload
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote_plus, urljoin, urlsplit
 
 import httpx
 from httpx import Client, Request, Response
@@ -168,6 +168,26 @@ def _model_payload(
     return value.model_dump(exclude_unset=True, mode="json")
 
 
+def _with_query_params(url: str, values: dict[str, Any], model: type[BaseModel]) -> str:
+    """Keep provider query bytes while the SDK model owns its declared fields."""
+    base, _, query = validate_request_url(url).partition("?")
+    names = set(values)
+    for name, field in model.model_fields.items():
+        names.add(name)
+        for alias in (field.alias, field.serialization_alias):
+            if alias is not None:
+                names.add(alias)
+    preserved = [
+        part
+        for part in (query.split("&") if query else [])
+        if unquote_plus(part.partition("=")[0]) not in names
+    ]
+    encoded = str(httpx.QueryParams(values))
+    if encoded:
+        preserved.append(encoded)
+    return base + "?" + "&".join(preserved)
+
+
 def _prepare_request(
     client: "_RequestBuilder",
     method: str,
@@ -189,7 +209,13 @@ def _prepare_request(
         headers.update(get_default_headers())
         components = ("content-type", "content-digest", "content-length")
     if query is not _NOT_GIVEN:
-        options["params"] = _model_payload(query, "query", query_model)
+        values = _model_payload(query, "query", query_model)
+        if "?" in url:
+            # HTTPX params replace an existing URL query. Compose it first so
+            # opaque provider parameters survive without decoding/re-encoding.
+            url = _with_query_params(url, values, query_model)
+        else:
+            options["params"] = values
     if access_token is not _NOT_GIVEN:
         if not isinstance(access_token, str):
             raise InputError(reason="access_token")

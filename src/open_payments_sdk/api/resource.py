@@ -199,14 +199,11 @@ class IncomingPayments(SecurityBase):
         return self.create(resource_server_endpoint, payment, access_token)
 
     @_sdk_operation("incoming_payments.list")
-    def get_incoming_payments(
-        self, query: PaymentListQuery, resource_server_endpoint: str, access_token: str
+    def list(
+        self, url: UrlInput, query: PaymentListQuery, access_token: str
     ) -> PaginatedIncomingPayments:
-        """
-        Get Incoming Payment
-        """
-        base_url = resource_server_endpoint.rstrip("/")
-        url = f"{base_url}/incoming-payments"
+        """Read one validated page under the resource-server base URL."""
+        url = _append_url_path(url, "/incoming-payments", strip_trailing_slashes=True)
         result = _execute_request(
             self.http_client,
             "GET",
@@ -226,6 +223,13 @@ class IncomingPayments(SecurityBase):
                 location_prefix=("result", index),
             )
         return result
+
+    @_sdk_operation("incoming_payments.list")
+    def get_incoming_payments(
+        self, query: PaymentListQuery, resource_server_endpoint: str, access_token: str
+    ) -> PaginatedIncomingPayments:
+        """Compatibility adapter retaining query/endpoint/token argument order."""
+        return self.list(resource_server_endpoint, query, access_token)
 
     @_sdk_operation("incoming_payments.get")
     def get(self, url: UrlInput, access_token: str) -> IncomingPaymentResponse:
@@ -322,14 +326,11 @@ class OutgoingPayments(SecurityBase):
         )
 
     @_sdk_operation("outgoing_payments.list")
-    def get_outgoing_payments(
-        self, query: PaymentListQuery, resource_server_endpoint: str, access_token: str
+    def list(
+        self, url: UrlInput, query: PaymentListQuery, access_token: str
     ) -> PaginatedOutgoingPayments:
-        """
-        Get Outgoing Payments
-        """
-        base_url = resource_server_endpoint.rstrip("/")
-        url = f"{base_url}/outgoing-payments"
+        """Read one validated page under the resource-server base URL."""
+        url = _append_url_path(url, "/outgoing-payments", strip_trailing_slashes=True)
         result = _execute_request(
             self.http_client,
             "GET",
@@ -349,6 +350,13 @@ class OutgoingPayments(SecurityBase):
                 location_prefix=("result", index),
             )
         return result
+
+    @_sdk_operation("outgoing_payments.list")
+    def get_outgoing_payments(
+        self, query: PaymentListQuery, resource_server_endpoint: str, access_token: str
+    ) -> PaginatedOutgoingPayments:
+        """Compatibility adapter retaining query/endpoint/token argument order."""
+        return self.list(resource_server_endpoint, query, access_token)
 
     @_sdk_operation("outgoing_payments.get")
     def get_outgoing_payment(
