@@ -41,6 +41,7 @@ AUTH = "https://auth.example/prefix"
 RESOURCE = "https://resource.example/prefix"
 RECEIVER = "https://resource.example/incoming-payments/1"
 SENSITIVE_URL = f"https://user:{SECRET}@[2001:db8::1]:8443/continue/{SECRET}?token={SECRET}#{SECRET}"
+DISCOVERY_URL = f"https://[2001:db8::1]:8443/wallet/{SECRET}?token={SECRET}"
 WALLET_RESPONSE = {
     "id": WALLET,
     "assetCode": "USD",
@@ -279,7 +280,7 @@ def test_native_http_failures_retain_status_and_explicit_server_data(
         )
     )
     with pytest.raises(HTTPError) as caught:
-        client.get_wallet_address(SENSITIVE_URL)
+        client.get_wallet_address(DISCOVERY_URL)
     error = caught.value
     assert error.url == "https://[2001:db8::1]:8443/"
     assert error.status == status
@@ -414,8 +415,8 @@ def test_validation_locations_keep_schema_fields_and_indexes_without_arbitrary_k
     assert_safe(caught.value)
 
 
-@pytest.mark.parametrize("status", [101, 199, 202, 204, 206, 301, 302, 303, 307, 308])
-def test_unexpected_statuses_never_decode_or_follow_redirects(native_wallet, status):
+@pytest.mark.parametrize("status", [101, 199, 202, 204, 206])
+def test_unexpected_discovery_statuses_never_decode_json(native_wallet, status):
     client, seen = native_wallet(
         lambda request: httpx.Response(
             status,
@@ -424,7 +425,7 @@ def test_unexpected_statuses_never_decode_or_follow_redirects(native_wallet, sta
         )
     )
     with pytest.raises(ResponseError) as caught:
-        client.get_wallet_address(SENSITIVE_URL)
+        client.get_wallet_address(DISCOVERY_URL)
     error = caught.value
     assert error.status == status
     assert error.reason == "unexpected_status"
@@ -447,7 +448,7 @@ def test_timeouts_are_distinct_transport_errors_without_retries(
 
     client, seen = native_wallet(fail)
     with pytest.raises(TransportTimeoutError) as caught:
-        client.get_wallet_address(SENSITIVE_URL)
+        client.get_wallet_address(DISCOVERY_URL)
     error = caught.value
     assert isinstance(error, TransportError)
     assert error.kind == "timeout"
@@ -481,7 +482,7 @@ def test_native_transport_failures_preserve_suppressed_original_context(
 
     client, seen = native_wallet(fail)
     with pytest.raises(TransportError) as caught:
-        client.get_wallet_address(SENSITIVE_URL)
+        client.get_wallet_address(DISCOVERY_URL)
     error = caught.value
     assert not isinstance(error, TransportTimeoutError)
     assert error.kind == "transport"
@@ -498,7 +499,7 @@ def test_content_decoding_failure_is_a_response_error(native_wallet):
 
     client, seen = native_wallet(fail)
     with pytest.raises(ResponseError) as caught:
-        client.get_wallet_address(SENSITIVE_URL)
+        client.get_wallet_address(DISCOVERY_URL)
     assert caught.value.reason == "encoding"
     assert caught.value.__context__ is original
     assert len(seen) == 1
@@ -509,7 +510,7 @@ def test_input_url_failure_is_structured_before_dispatch(op_client, http_mock):
     with pytest.raises(InputError) as caught:
         op_client.wallet.get_wallet_address("https://wallet.example:invalid-" + SECRET)
     assert caught.value.operation == "wallet.get"
-    assert caught.value.reason == "request"
+    assert caught.value.reason == "request_url"
     assert caught.value.url is None
     assert not http_mock.requests
     assert_safe(caught.value)
@@ -519,7 +520,8 @@ def test_unsupported_request_protocol_is_an_input_error():
     with HttpClient(1.0) as client, pytest.raises(InputError) as caught:
         Wallet(client).get_wallet_address("ftp://wallet.example/" + SECRET)
     assert caught.value.operation == "wallet.get"
-    assert caught.value.reason == "protocol"
+    assert caught.value.reason == "request_url"
+    assert client._client is None  # Rejected before transport initialization.
     assert_safe(caught.value)
 
 

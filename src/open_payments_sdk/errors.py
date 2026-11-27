@@ -117,7 +117,17 @@ class HTTPError(OpenPaymentsError):
 
 
 class ResponseError(OpenPaymentsError):
+    """Response failure with an optional untrusted redirect Location value.
+
+    ``location`` is available for deliberate inspection and never included in
+    ordinary diagnostics. It can contain secrets, just like server details.
+    """
+
     kind = "response"
+
+    def __init__(self, *, location: str | None = None, **metadata):
+        super().__init__(**metadata)
+        self.location = location
 
 
 @lru_cache(maxsize=None)

@@ -3,10 +3,12 @@
 from math import isfinite
 from threading import Lock
 from typing import Any, Callable, Protocol, Sequence, TypeVar, overload
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from httpx import Client, Request, Response
 from pydantic import BaseModel, ValidationError
+from rfc3986_validator import validate_rfc3986
 
 from open_payments_sdk.errors import (
     ConfigurationError,
@@ -22,6 +24,7 @@ from open_payments_sdk.utils.utils import (
     get_default_covered_components,
     get_default_headers,
 )
+from open_payments_sdk.utils.urls import validate_request_url
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -29,7 +32,16 @@ T = TypeVar("T", bound=BaseModel)
 def _status_error(response: httpx.Response, request: httpx.Request):
     metadata = dict(method=request.method, url=request.url, status=response.status_code)
     if not 400 <= response.status_code < 600:
-        return ResponseError(**metadata, reason="unexpected_status")
+        locations = response.headers.get_list("location")
+        return ResponseError(
+            **metadata,
+            reason="unexpected_status",
+            location=(
+                locations[0]
+                if 300 <= response.status_code < 400 and len(locations) == 1
+                else None
+            ),
+        )
     code = description = details = None
     try:
         payload = response.json()
@@ -67,6 +79,12 @@ def _send(client, request: httpx.Request, **options) -> httpx.Response:
     except httpx.DecodingError:
         raise ResponseError(
             method=request.method, url=request.url, reason="encoding"
+        ) from None
+    except httpx.InvalidURL:
+        # HTTPX prepares response.next_request even with redirects disabled.
+        # A malformed Location can therefore fail before it returns a response.
+        raise ResponseError(
+            method=request.method, url=request.url, reason="response_url"
         ) from None
     except httpx.RequestError:
         raise TransportError(method=request.method, url=request.url) from None
@@ -254,6 +272,92 @@ def _execute_request(
     return _request_result(
         client, request, response_model, expected_status=expected_status
     )
+
+
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+_PUBLIC_CREDENTIAL_HEADERS = (
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "signature",
+    "signature-input",
+    "content-digest",
+)
+
+
+def _redirect_target(base: httpx.URL, location: str) -> str:
+    # Check the raw reference before URL parsers can repair or strip input.
+    match = validate_rfc3986(location, rule="URI_reference")
+    if match is None or match.end() != len(location) or not location or "#" in location:
+        raise InputError(reason="request_url")
+    parts = urlsplit(location)
+    if parts.scheme:
+        target = validate_request_url(location)
+    elif location.startswith("//"):
+        target = validate_request_url(f"{base.scheme}:{location}")
+    else:
+        target = urljoin(str(base), location)
+        # urllib.urljoin inherits the old query for an explicitly empty '?'.
+        if "?" in location and not parts.query:
+            target = target.partition("?")[0] + "?"
+        target = validate_request_url(target)
+    if httpx.URL(target).scheme != "https":
+        raise InputError(reason="request_url")
+    return target
+
+
+def _public_get(client: "HttpClientProtocol", url: str, response_model: type[T]) -> T:
+    """Read public JSON with at most five secure redirects, never signed replay."""
+    crossed_origin = False
+    seen: set[httpx.URL] = set()
+    for redirects in range(6):
+        request = _prepare_request(client, "GET", url)
+        request.headers.setdefault("Accept", "application/json")
+        for name in _PUBLIC_CREDENTIAL_HEADERS:
+            request.headers.pop(name, None)
+        if crossed_origin:
+            # Rebuild each hop, but do not reintroduce session/custom defaults
+            # after leaving the original origin, even if a later hop returns.
+            request.headers = httpx.Headers(
+                (name, value)
+                for name, value in request.headers.multi_items()
+                if name.lower() in ("host", "accept", "user-agent")
+            )
+        seen.add(request.url)
+        try:
+            return _request_result(client, request, response_model)
+        except ResponseError as error:
+            if error.status not in _REDIRECT_STATUSES:
+                raise
+            reason = None
+            try:
+                if error.location is None:
+                    raise InputError(reason="request_url")
+                target = _redirect_target(request.url, error.location)
+            except (InputError, ValueError):
+                reason = "redirect_location"
+            else:
+                next_url = httpx.URL(target)
+                if next_url in seen:
+                    reason = "redirect_loop"
+                elif redirects == 5:
+                    reason = "redirect_limit"
+                else:
+                    crossed_origin = crossed_origin or (
+                        request.url.scheme,
+                        request.url.host,
+                        request.url.port,
+                    ) != (next_url.scheme, next_url.host, next_url.port)
+                    url = target
+                    continue
+            raise ResponseError(
+                method=request.method,
+                url=request.url,
+                status=error.status,
+                location=error.location,
+                reason=reason,
+            ) from None
+    raise AssertionError("Unreachable discovery redirect state")
 
 
 def _timeout(value: float | httpx.Timeout | None) -> httpx.Timeout:

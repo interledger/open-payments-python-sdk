@@ -4,6 +4,7 @@ Open Payments API Client Module
 
 import logging
 from inspect import iscoroutinefunction
+from typing import TypeVar
 
 import httpx
 
@@ -19,20 +20,15 @@ if not any(isinstance(handler, logging.NullHandler) for handler in _LOGGER.handl
     _LOGGER.addHandler(logging.NullHandler())
 
 
-class OpenPaymentsClient:
-    """
-    Open Payments API Client
-    """
+_ClientType = TypeVar("_ClientType", bound="_ClientBase")
 
-    @_sdk_operation("client.initialize")
-    def __init__(
+
+class _ClientBase:
+    def _initialize(
         self,
-        keyid: str,
-        private_key: str,
-        client_wallet_address: str,
-        cfg: configuration.Configuration | None = None,
-        http_client: HttpClientProtocol | httpx.Client | None = None,
-    ):
+        cfg: configuration.Configuration | None,
+        http_client: HttpClientProtocol | httpx.Client | None,
+    ) -> None:
         if cfg is None:
             cfg = configuration.Configuration()
         if not isinstance(cfg, configuration.Configuration):
@@ -52,14 +48,47 @@ class OpenPaymentsClient:
         self.http_client = http_client
         self.logger = logger if logger is not None else _LOGGER
         self.user_agent = headers["User-Agent"]
-        self.client_wallet_address = client_wallet_address
-        self.keyid = keyid
-        self.private_key = private_key
         self._session = _ClientSession(
             http_client,
             headers,
             close_transport=owned.close if owned is not None else None,
         )
+
+    @property
+    def is_closed(self) -> bool:
+        return self._session.is_closed
+
+    @_sdk_operation("client.close")
+    def close(self) -> None:
+        self._session.close()
+
+    @_sdk_operation("client.enter")
+    def __enter__(self: _ClientType) -> _ClientType:
+        self._session._check_open()
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_traceback) -> None:
+        self.close()
+
+
+class OpenPaymentsClient(_ClientBase):
+    """
+    Open Payments API Client
+    """
+
+    @_sdk_operation("client.initialize")
+    def __init__(
+        self,
+        keyid: str,
+        private_key: str,
+        client_wallet_address: str,
+        cfg: configuration.Configuration | None = None,
+        http_client: HttpClientProtocol | httpx.Client | None = None,
+    ):
+        self._initialize(cfg, http_client)
+        self.client_wallet_address = client_wallet_address
+        self.keyid = keyid
+        self.private_key = private_key
         try:
             self._session._check_open()
             self.grants = Grants(
@@ -75,6 +104,7 @@ class OpenPaymentsClient:
                 http_client=self._session,
             )
             self.wallet = Wallet(self._session)
+            self.wallet_address = self.wallet
             self.incoming_payments = IncomingPayments(
                 keyid=keyid,
                 private_key=private_key,
@@ -97,18 +127,21 @@ class OpenPaymentsClient:
             self._session.close()
             raise
 
-    @property
-    def is_closed(self) -> bool:
-        return self._session.is_closed
 
-    @_sdk_operation("client.close")
-    def close(self) -> None:
-        self._session.close()
+class UnauthenticatedClient(_ClientBase):
+    """Public discovery client; construction needs no key, wallet or token."""
 
-    @_sdk_operation("client.enter")
-    def __enter__(self) -> "OpenPaymentsClient":
-        self._session._check_open()
-        return self
-
-    def __exit__(self, exc_type, exc_value, exc_traceback) -> None:
-        self.close()
+    @_sdk_operation("client.initialize")
+    def __init__(
+        self,
+        cfg: configuration.Configuration | None = None,
+        http_client: HttpClientProtocol | httpx.Client | None = None,
+    ):
+        self._initialize(cfg, http_client)
+        try:
+            self._session._check_open()
+            self.wallet = Wallet(self._session)
+            self.wallet_address = self.wallet
+        except BaseException:
+            self._session.close()
+            raise
