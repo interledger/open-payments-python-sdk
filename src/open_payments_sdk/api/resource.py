@@ -18,6 +18,7 @@ from open_payments_sdk.models.resource import (
     IncomingPaymentRequest,
     IncomingPaymentResponse,
     OutgoingPayment,
+    OutgoingPaymentGrant,
     OutgoingPaymentRequest,
     OutgoingPaymentWithSpentAmounts,
     PaginatedIncomingPayments,
@@ -393,6 +394,23 @@ class OutgoingPayments(SecurityBase):
         result = self.get(url, access_token)
         return OutgoingPaymentWithSpentAmounts.model_validate(
             result.model_dump(mode="python", exclude_unset=True)
+        )
+
+    @_sdk_operation("outgoing_payments.get_grant_spent_amounts")
+    def get_grant_spent_amounts(
+        self, url: UrlInput, access_token: str
+    ) -> OutgoingPaymentGrant:
+        """Read current grant spending under the resource-server base URL."""
+        url = _append_url_path(
+            url, "/outgoing-payment-grant", strip_trailing_slashes=True
+        )
+        return _execute_request(
+            self.http_client,
+            "GET",
+            url,
+            OutgoingPaymentGrant,
+            access_token=access_token,
+            signer=self,
         )
 
 

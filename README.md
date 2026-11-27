@@ -509,6 +509,27 @@ Creation returns `OutgoingPaymentWithSpentAmounts`, including optional grant-spe
 
 The existing `post_create_payment(payment, resource_server_endpoint, access_token)` and `get_outgoing_payment(payment_id, resource_server_endpoint, access_token)` helpers retain their parameter names and order and delegate to these methods. Their conventional paths preserve base queries. The old getter validates the plain wire response first, then preserves its existing `OutgoingPaymentWithSpentAmounts` Python return type with absent optional spent fields. Fields omitted by the server stay unset in the adapted model.
 
+## Outgoing grant-spent amounts
+
+Read the spent amounts for the outgoing payment grant corresponding to the supplied current access token:
+
+```python
+from open_payments_sdk import OpenPaymentsClient
+
+with OpenPaymentsClient(
+    keyid=key_pair.jwks.keys[0].kid,
+    private_key=key_pair.private_key_pem,
+) as client:
+    spent = client.outgoing_payments.get_grant_spent_amounts(
+        url=wallet.resourceServer,
+        access_token=outgoing_access_token,
+    )
+```
+
+Supply the resource-server base URL as an HTTP(S) string, `AnyUrl` or `httpx.URL`. The method trims trailing base-path slashes and appends `/outgoing-payment-grant` before any query, preserving opaque provider prefixes and query spelling. It sends one signed bodyless GET, expects HTTP 200 and returns `OutgoingPaymentGrant`. Signed redirects are rejected without replay.
+
+The response requires both `spentReceiveAmount` and `spentDebitAmount`; each can be an amount or `None`. Explicit nulls remain present in dumps and are not replaced with zero. Amounts retain their original value strings and independent assets, and permitted finite JSON extensions are preserved. The SDK does not infer balances or compare totals with individual payments. For recurring grants, the server reports the current interval's amounts. Each call reads the server using its supplied token without caching earlier totals.
+
 ## SDK operation errors
 
 Synchronous wallet, grant, token and payment operations raise subclasses of `OpenPaymentsError` from `open_payments_sdk.errors`: `ConfigurationError`, `InputError`, `SigningError`, `TransportError`, `TransportTimeoutError`, `HTTPError` or `ResponseError`. Direct Pydantic model construction and standalone cryptography helpers retain their existing exceptions. A timeout is also a transport error; it does not establish whether the server completed a payment. The SDK does not retry failed calls.
