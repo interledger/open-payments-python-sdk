@@ -86,7 +86,7 @@ class OpenPaymentsClient(_ClientBase):
         self,
         keyid: str,
         private_key: str,
-        client_wallet_address: str,
+        client_wallet_address: str | None = None,
         cfg: configuration.Configuration | None = None,
         http_client: HttpClientProtocol | httpx.Client | None = None,
     ):
@@ -101,6 +101,7 @@ class OpenPaymentsClient(_ClientBase):
                 private_key=private_key,
                 logger=self.logger,
                 http_client=self._session,
+                client_wallet_address=client_wallet_address,
             )
             self.access_tokens = AccessTokens(
                 keyid=keyid,

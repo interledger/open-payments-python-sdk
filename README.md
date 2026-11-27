@@ -291,7 +291,35 @@ SDK requests use their prepared URL, body and headers without merging native-cli
 
 All synchronous wallet, grant, token and payment methods share one request pipeline. Each supplied body/query model is exported once with its existing aliases and omission rules, then HTTPX prepares the final URL and JSON bytes. The SDK calculates the content digest and signs that prepared request before sending it to the shared response handler. Tokens remain call-local and covered request data is preserved during dispatch.
 
-Required body/query arguments must match the operation's SDK request model. Invalid body/query values, including `None`, raw dictionaries and unrelated models, raise `InputError` before their fields are serialized. Required access tokens must be strings; invalid values raise `InputError` before dispatch. An empty polling model such as `InteractRef()` sends a signed `{}` JSON body; bodyless operations send no JSON payload.
+Body/query arguments must match the operation's SDK request model, except that `grants.request` also accepts a mapping and validates it as a `GrantRequest`. Other invalid body/query values, including `None`, raw dictionaries and unrelated models, raise `InputError` before their fields are serialized. Required access tokens must be strings; invalid values raise `InputError` before dispatch. An empty polling model such as `InteractRef()` sends a signed `{}` JSON body; bodyless operations send no JSON payload.
+
+## Initial grant requests
+
+Use `grants.request(url, grant_request)` with the complete authorization endpoint and either a mapping or a `GrantRequest`. When a mapping omits `client`, the SDK fills it from the constructor's `client_wallet_address` before validating and signing the body:
+
+```python
+from open_payments_sdk import OpenPaymentsClient
+
+with OpenPaymentsClient(
+    keyid=key_pair.jwks.keys[0].kid,
+    private_key=key_pair.private_key_pem,
+    client_wallet_address="https://wallet.example/alice",
+) as authenticated_client:
+    requested = authenticated_client.grants.request(
+        url="https://auth.example/grants",
+        grant_request={
+            "access_token": {
+                "access": [{"type": "incoming-payment", "actions": ["create"]}]
+            }
+        },
+    )
+```
+
+An explicit `client` always takes precedence, including a wallet-address object with display metadata or a public JWK identity. An invalid explicit identity, such as null, raises `InputError` without falling back to the configured wallet. The default is captured when the client is constructed; changing its public `client_wallet_address` attribute later does not change the grant service's default. Mappings and their nested values are left unchanged.
+
+The constructor's wallet argument is optional for operations that supply their own identity, including directed JWK grants. Omitting both the per-call identity and the default raises `InputError` before preparing a request. Typed `GrantRequest` instances still require their own explicit identity. The compatibility helper `post_grant_request(grant_request, auth_server_endpoint)` keeps its model-only argument contract and delegates to the same request path.
+
+Initial requests support access-token, subject-only and combined request shapes described below. Each outgoing-payment access entry may specify at most one of `limits.debitAmount` and `limits.receiveAmount`; supplying both raises `InputError` before signing. This request rule also applies through the compatibility helper. The reusable `LimitsOutgoing` data model still accepts both amounts when parsing protocol data. The SDK exports the validated request model once, sends no bearer token on the initial request and does not follow signed redirects or retry.
 
 ## Grant continuation and cancellation
 

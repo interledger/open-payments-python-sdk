@@ -2,9 +2,19 @@
 Grants Module
 """
 
+from collections.abc import Mapping
 from logging import Logger, LoggerAdapter
+from typing import Any
 
-from open_payments_sdk.errors import InputError, _sdk_operation
+from pydantic import ValidationError
+
+from open_payments_sdk.errors import (
+    InputError,
+    ValidationIssue,
+    _schema_fields,
+    _sdk_operation,
+    _validation_issues,
+)
 from open_payments_sdk.gnap_utils.security import SecurityBase
 from open_payments_sdk.http import (
     HttpClient,
@@ -14,6 +24,7 @@ from open_payments_sdk.http import (
 )
 from open_payments_sdk.models.auth import AccessToken, Grant
 from open_payments_sdk.models.auth import (
+    AccessOutgoing,
     GrantContinueResponse,
     GrantRequest,
     InteractRef,
@@ -32,10 +43,72 @@ class Grants(SecurityBase):
         private_key: str,
         logger: Logger | LoggerAdapter,
         http_client: HttpClient | HttpClientProtocol,
+        *,
+        client_wallet_address: str | None = None,
     ):
         super().__init__(keyid=keyid, private_key=private_key, logger=logger)
         self.logger = logger
         self.http_client = http_client
+        self._client_wallet_address = client_wallet_address
+
+    @_sdk_operation("grants.request")
+    def request(
+        self,
+        url: UrlInput,
+        grant_request: GrantRequest | Mapping[str, Any],
+    ) -> Grant:
+        """Request a grant with an explicit or configured wallet identity.
+
+        Mapping inputs are copied and validated after filling an omitted client.
+        A GrantRequest already contains its explicit identity and is exported
+        through the same model pipeline as the compatibility entry point.
+        """
+        url = validate_request_url(url)
+        if isinstance(grant_request, GrantRequest):
+            body = grant_request
+        elif isinstance(grant_request, Mapping):
+            payload = dict(grant_request)
+            if "client" not in payload:
+                if self._client_wallet_address is None:
+                    raise InputError(reason="client_identity")
+                payload["client"] = self._client_wallet_address
+            try:
+                body = GrantRequest.model_validate(payload)
+            except ValidationError as error:
+                raise InputError(
+                    reason="body",
+                    validation_errors=_validation_issues(
+                        error, _schema_fields(GrantRequest)
+                    ),
+                ) from None
+        else:
+            raise InputError(reason="body")
+        if body.access_token is not None:
+            for index, access in enumerate(body.access_token.access):
+                if (
+                    isinstance(access, AccessOutgoing)
+                    and access.limits is not None
+                    and access.limits.debitAmount is not None
+                    and access.limits.receiveAmount is not None
+                ):
+                    raise InputError(
+                        reason="body",
+                        validation_errors=(
+                            ValidationIssue(
+                                ("access_token", "access", index, "limits"),
+                                "amount_conflict",
+                            ),
+                        ),
+                    )
+        return _execute_request(
+            self.http_client,
+            "POST",
+            url,
+            Grant,
+            body=body,
+            body_model=GrantRequest,
+            signer=self,
+        )
 
     @_sdk_operation("grants.request")
     def post_grant_request(
@@ -43,18 +116,10 @@ class Grants(SecurityBase):
         grant_request: GrantRequest,
         auth_server_endpoint: str,
     ) -> Grant:
-        """
-        Grant Request
-        """
-        return _execute_request(
-            self.http_client,
-            "POST",
-            auth_server_endpoint,
-            Grant,
-            body=grant_request,
-            body_model=GrantRequest,
-            signer=self,
-        )
+        """Compatibility adapter retaining its required GrantRequest model."""
+        if not isinstance(grant_request, GrantRequest):
+            raise InputError(reason="body")
+        return self.request(auth_server_endpoint, grant_request)
 
     @_sdk_operation("grants.continue")
     def continue_grant(
