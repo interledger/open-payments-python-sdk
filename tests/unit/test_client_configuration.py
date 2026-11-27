@@ -1,6 +1,5 @@
 """SDK configuration, scoped lifecycle and caller-owned transport behavior."""
 
-import asyncio
 import logging
 from types import SimpleNamespace
 
@@ -533,7 +532,15 @@ def test_async_transport_is_not_accepted_by_synchronous_client(make_client):
         assert caught.value.reason == "http_client"
         assert not native.is_closed
     finally:
-        asyncio.run(native.aclose())
+        # The unused MockTransport closes without asynchronous I/O. Avoid an
+        # event loop's self-pipe, which needs loopback TCP sockets on Windows.
+        closing = native.aclose()
+        try:
+            with pytest.raises(StopIteration):
+                closing.send(None)
+        finally:
+            closing.close()
+    assert native.is_closed
 
 
 def test_default_logger_does_not_accumulate_handlers_or_create_stream_handlers(
