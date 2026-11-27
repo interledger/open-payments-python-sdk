@@ -12,7 +12,7 @@ import pytest
 from pydantic import AnyUrl, ValidationError
 
 from open_payments_sdk.errors import HTTPError, ResponseError
-from open_payments_sdk.models.resource import Amount
+from open_payments_sdk.models.resource import IncomingPaymentResponse, Quote
 from open_payments_sdk.process.crud import OpenPaymentsProcessor
 from open_payments_sdk.process.models.process import (
     PendingIncomingPaymentTransaction,
@@ -104,9 +104,27 @@ def processor_context(http_mock, keyid_private_key, monkeypatch):
         redirect_uri="https://merchant.example/callback/",
         http_client=http_mock.client,
     )
-    incoming = Mock(return_value=SimpleNamespace(id=AnyUrl(INCOMING_ID)))
+    incoming = Mock(
+        return_value=IncomingPaymentResponse(
+            id=INCOMING_ID,
+            walletAddress=SELLER,
+            incomingAmount=AMOUNT,
+            receivedAmount=dict(AMOUNT, value="0"),
+            completed=False,
+            methods=[],
+            createdAt="2026-11-27T00:00:00Z",
+        )
+    )
     quote = Mock(
-        return_value=SimpleNamespace(id=AnyUrl(QUOTE_ID), debitAmount=Amount(**AMOUNT))
+        return_value=Quote(
+            id=QUOTE_ID,
+            walletAddress=BUYER,
+            receiver=INCOMING_ID,
+            method="ilp",
+            debitAmount=AMOUNT,
+            receiveAmount=AMOUNT,
+            createdAt="2026-11-27T00:00:00Z",
+        )
     )
     nonce = Mock(return_value=CLIENT_NONCE)
     monkeypatch.setattr(processor, "request_incoming_payment", incoming)

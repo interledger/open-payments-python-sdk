@@ -7,7 +7,7 @@ from pydantic import AnyUrl, HttpUrl
 from ...http import HttpClient
 from ...client.client import OpenPaymentsClient
 from ...api.auth import GrantRequest, Grant, InteractRef
-from ...models.auth import GrantResponse
+from ...models.auth import GrantResponse, InteractionInstructionsResponse
 from ...models.resource import (
     IncomingPaymentRequest,
     OutgoingPaymentRequest,
@@ -163,7 +163,8 @@ class OpenPaymentsProcessor:
         Implements the first half of the purchase process, requesting 'incoming-payment' and 'quote' grants,
         then requesting - and returning - an interactive payment grant for the buyer.
         """
-        amount = self._incoming_payment_request(amount).incomingAmount.value
+        payment_request = self._incoming_payment_request(amount)
+        amount = payment_request.incomingAmount.value
         with _transaction_lock:
             if (
                 self.pending_payment.client_nonce is not None
@@ -174,14 +175,24 @@ class OpenPaymentsProcessor:
                 )
             self.pending_payment.client_nonce = secrets.token_urlsafe(32)
             self.pending_payment.grant_endpoint = str(self.buyer_wallet.authServer)
+            self.pending_payment.incoming_amount = (
+                payment_request.incomingAmount.model_copy(deep=True)
+            )
         # 1. Request incoming payment grant for the seller
         incoming_payment_response = self.request_incoming_payment(amount=amount)
+        self.pending_payment.incoming_payment = incoming_payment_response.model_copy(
+            deep=True
+        )
         self.pending_payment.incoming_payment_id = incoming_payment_response.id
         # 2. Request quote grant for the buyer
         quote_response = self.request_quote(
             incoming_payment_id=incoming_payment_response.id
         )
+        self.pending_payment.quote = quote_response.model_copy(deep=True)
         self.pending_payment.quote_id = quote_response.id
+        self.pending_payment.quoted_amount = quote_response.debitAmount.model_copy(
+            deep=True
+        )
         # 3. Request an interactive payment endpoint for the buyer
         # Request a grant
         grant_request = GrantRequest(
@@ -220,17 +231,21 @@ class OpenPaymentsProcessor:
             },
         )
         # Request the interactive endpoint
-        # TODO: db save of the quote and interactive responses to retrieve later to complete the purchase
         interactive_response = self.client.grants.post_grant_request(
             grant_request=grant_request,
             auth_server_endpoint=self.pending_payment.grant_endpoint,
         )
+        self.pending_payment.outgoing_grant = interactive_response.model_copy(deep=True)
+        self.pending_payment.continue_id = interactive_response.cont.access_token.value
+        self.pending_payment.continue_url = interactive_response.cont.uri
+        if not isinstance(interactive_response.root, InteractionInstructionsResponse):
+            raise ValueError(
+                "Outgoing payment grant did not return interaction instructions"
+            )
         self.pending_payment.interactive_redirect = (
             interactive_response.interact.redirect
         )
         self.pending_payment.finish_id = interactive_response.interact.finish
-        self.pending_payment.continue_id = interactive_response.cont.access_token.value
-        self.pending_payment.continue_url = interactive_response.cont.uri
         return interactive_response.interact.redirect
 
     ###################################################################################################

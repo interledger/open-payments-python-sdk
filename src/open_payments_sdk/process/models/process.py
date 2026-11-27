@@ -4,7 +4,12 @@ from ulid import ULID
 
 from ...models.auth import Grant, GrantContinueResponse
 from ...models.wallet import WalletAddress
-from ...models.resource import Amount, OutgoingPaymentWithSpentAmounts
+from ...models.resource import (
+    Amount,
+    IncomingPaymentResponse,
+    OutgoingPaymentWithSpentAmounts,
+    Quote,
+)
 from ...utils.parser import paymentsparser
 
 
@@ -35,6 +40,16 @@ class PendingIncomingPaymentTransaction(BaseModel):
     )
     quoted_amount: Optional[Amount] = Field(
         None, description="Amount quoted, including currency code."
+    )
+    incoming_payment: Optional[IncomingPaymentResponse] = Field(
+        None,
+        repr=False,
+        description="Validated incoming resource created during purchase initiation.",
+    )
+    quote: Optional[Quote] = Field(
+        None,
+        repr=False,
+        description="Validated quote defining the purchase amounts and expiry metadata.",
     )
     client_nonce: Optional[str] = Field(
         None,
@@ -75,6 +90,11 @@ class PendingIncomingPaymentTransaction(BaseModel):
         None,
         repr=False,
         description="Latest validated quote grant response, including pending instructions.",
+    )
+    outgoing_grant: Optional[Grant] = Field(
+        None,
+        repr=False,
+        description="Validated initial outgoing grant response and its continuation metadata.",
     )
     continuation_response: Optional[GrantContinueResponse] = Field(
         None,

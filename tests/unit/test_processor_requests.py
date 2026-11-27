@@ -339,3 +339,210 @@ def test_pending_initial_grant_remains_recoverable_without_restarting_purchase(c
     with pytest.raises(ValueError, match="initiation already started"):
         context.processor.get_purchase_endpoint(amount="1000")
     assert len(context.http.requests) == 3
+
+
+def purchase_payloads():
+    incoming = copy.deepcopy(INCOMING)
+    incoming["incomingAmount"]["value"] = "0001000"
+    incoming["metadata"] = {"invoice": "private-state-invoice"}
+    incoming["methods"] = [
+        {
+            "type": "ilp",
+            "ilpAddress": "test.seller",
+            "sharedSecret": "private-ilp-state-secret",
+        }
+    ]
+    quote = copy.deepcopy(QUOTE)
+    quote["debitAmount"]["value"] = "0001200"
+    quote["expiresAt"] = "provider-expiry-marker"
+    return incoming, quote
+
+
+def purchase_responses(incoming, quote, outgoing=PENDING):
+    quote_grant = copy.deepcopy(APPROVED)
+    quote_grant["access_token"]["value"] = "quote-access-secret"
+    return [
+        httpx.Response(200, json=APPROVED),
+        httpx.Response(201, json=incoming),
+        httpx.Response(200, json=quote_grant),
+        httpx.Response(201, json=quote),
+        httpx.Response(200, json=outgoing),
+    ]
+
+
+def test_purchase_snapshots_intent_resources_and_interactive_grant_before_recovery(
+    context, monkeypatch, keyid_private_key
+):
+    processor, http = context.processor, context.http
+    incoming, quote = purchase_payloads()
+    http.responses.extend(purchase_responses(incoming, quote))
+    captured = {}
+
+    def capture(name, method):
+        def call(**kwargs):
+            result = method(**kwargs)
+            captured.setdefault(name, []).append(result)
+            return result
+
+        return call
+
+    monkeypatch.setattr(
+        processor,
+        "request_incoming_payment",
+        capture("incoming", processor.request_incoming_payment),
+    )
+    monkeypatch.setattr(
+        processor, "request_quote", capture("quote", processor.request_quote)
+    )
+    monkeypatch.setattr(
+        processor.client.grants,
+        "post_grant_request",
+        capture("grant", processor.client.grants.post_grant_request),
+    )
+    send = http.client.send
+
+    def check_state(request):
+        state = processor.pending_payment
+        if str(request.url) == SELLER_AUTH:
+            assert state.incoming_amount.model_dump() == dict(AMOUNT, value="0001000")
+            assert state.client_nonce and state.incoming_payment is None
+        elif str(request.url) == BUYER_AUTH:
+            assert str(state.incoming_payment_id) == incoming["id"]
+            assert state.incoming_payment is not None
+            access = json.loads(request.content)["access_token"]["access"][0]
+            if access["type"] == "outgoing-payment":
+                assert state.quote.model_dump(mode="json", exclude_unset=True) == quote
+                assert state.quoted_amount.model_dump() == quote["debitAmount"]
+                assert state.outgoing_grant is None
+        return send(request)
+
+    monkeypatch.setattr(http.client, "send", check_state)
+    redirect = processor.get_purchase_endpoint(amount="0001000")
+    assert str(redirect) == PENDING["interact"]["redirect"]
+    state = processor.pending_payment
+    saved = state.model_dump_json(exclude_unset=True)
+    restored = PendingIncomingPaymentTransaction.model_validate_json(saved)
+    for snapshot in (state, restored):
+        assert (
+            snapshot.incoming_payment.model_dump(mode="json", exclude_unset=True)
+            == incoming
+        )
+        assert snapshot.quote.model_dump(mode="json", exclude_unset=True) == quote
+        assert snapshot.outgoing_grant.model_dump(mode="json") == PENDING
+        assert snapshot.incoming_amount.model_dump() == dict(AMOUNT, value="0001000")
+        assert snapshot.quoted_amount.model_dump() == quote["debitAmount"]
+        assert snapshot.quote.expiresAt == "provider-expiry-marker"
+        assert snapshot.outgoing_grant.cont.wait == 4
+        assert snapshot.continue_id == CONTINUE["access_token"]["value"]
+        assert snapshot.finish_id == PENDING["interact"]["finish"]
+        assert str(snapshot.continue_url) == CONTINUE["uri"]
+        assert str(snapshot.incoming_payment_id) == incoming["id"]
+        assert str(snapshot.quote_id) == quote["id"]
+        assert not snapshot.completion_started
+    captured["incoming"][0].incomingAmount.value = "9"
+    captured["quote"][0].debitAmount.value = "9"
+    captured["grant"][-1].interact.finish = "changed-finish"
+    assert state.incoming_payment.incomingAmount.value == "0001000"
+    assert state.incoming_amount.value == "0001000"
+    assert state.quote.debitAmount.value == state.quoted_amount.value == "0001200"
+    assert (
+        state.outgoing_grant.interact.finish
+        == state.finish_id
+        == PENDING["interact"]["finish"]
+    )
+    for secret in (
+        "private-state-invoice",
+        "private-ilp-state-secret",
+        CONTINUE["access_token"]["value"],
+        PENDING["interact"]["finish"],
+    ):
+        assert secret not in repr(state) and secret in saved
+    grant_body = json.loads(http.requests[-1].content)
+    assert grant_body["access_token"]["access"][0]["limits"] == {
+        "debitAmount": quote["debitAmount"]
+    }
+    assert grant_body["interact"]["finish"]["nonce"] == state.client_nonce
+    assert state.grant_endpoint == BUYER_AUTH and grant_body["client"] == SELLER
+    assert grant_body["interact"]["finish"][
+        "uri"
+    ] == "https://merchant.example/callback/" + str(state.id)
+    assert http.requests[3].headers["Authorization"] == "GNAP " + TOKEN
+    assert http.requests[5].headers["Authorization"] == "GNAP quote-access-secret"
+    key = load_private_key(keyid_private_key["private_key"], format="pem").public_key()
+    assert len(http.requests) == 7
+    assert all(
+        verify_request_signature(
+            request, public_key=key, key_id=keyid_private_key["keyid"]
+        )
+        for request in http.requests[2:]
+    )
+
+
+@pytest.mark.parametrize("stage", ["incoming", "quote", "outgoing_grant"])
+@pytest.mark.parametrize("status", [200, 500])
+def test_partial_purchase_state_survives_later_unknown_or_invalid_outcomes(
+    context, stage, status
+):
+    incoming, quote = purchase_payloads()
+    responses = purchase_responses(incoming, quote)
+    index = {"incoming": 1, "quote": 3, "outgoing_grant": 4}[stage]
+    context.http.responses.extend(
+        responses[:index] + [httpx.Response(status, json={"error": "uncertain"})]
+    )
+    with pytest.raises(ResponseError if status == 200 else HTTPError):
+        context.processor.get_purchase_endpoint(amount="0001000")
+    restored = PendingIncomingPaymentTransaction.model_validate_json(
+        context.processor.pending_payment.model_dump_json()
+    )
+    assert restored.incoming_amount.model_dump() == dict(AMOUNT, value="0001000")
+    assert restored.client_nonce and restored.grant_endpoint == BUYER_AUTH
+    assert (restored.incoming_payment is not None) is (stage != "incoming")
+    assert (restored.quote is not None) is (stage == "outgoing_grant")
+    assert (restored.quoted_amount is not None) is (stage == "outgoing_grant")
+    assert restored.outgoing_grant is None and restored.continue_id is None
+    if restored.incoming_payment is not None:
+        assert str(restored.incoming_payment_id) == incoming["id"]
+    if restored.quote is not None:
+        assert str(restored.quote_id) == quote["id"]
+        assert restored.quoted_amount.model_dump() == quote["debitAmount"]
+    count = len(context.http.requests)
+    with pytest.raises(ValueError, match="initiation already started"):
+        context.processor.get_purchase_endpoint(amount="0001000")
+    assert len(context.http.requests) == count
+
+
+def test_already_approved_outgoing_grant_is_retained_without_implicit_creation(context):
+    incoming, quote = purchase_payloads()
+    approved = copy.deepcopy(APPROVED)
+    approved["access_token"]["value"] = "outgoing-approved-secret"
+    context.http.responses.extend(purchase_responses(incoming, quote, approved))
+    with pytest.raises(
+        ValueError,
+        match="Outgoing payment grant did not return interaction instructions",
+    ) as caught:
+        context.processor.get_purchase_endpoint(amount="0001000")
+    state = PendingIncomingPaymentTransaction.model_validate_json(
+        context.processor.pending_payment.model_dump_json()
+    )
+    assert state.outgoing_grant.model_dump(mode="json") == approved
+    assert state.incoming_payment and state.quote and state.quoted_amount
+    assert state.continue_id == CONTINUE["access_token"]["value"]
+    assert str(state.continue_url) == CONTINUE["uri"]
+    assert (
+        state.finish_id is state.interactive_redirect is state.outgoing_payment is None
+    )
+    assert not state.completion_started and len(context.http.requests) == 7
+    assert "outgoing-approved-secret" not in repr(state) + str(caught.value)
+    with pytest.raises(ValueError, match="initiation already started"):
+        context.processor.get_purchase_endpoint(amount="0001000")
+    assert len(context.http.requests) == 7
+
+
+def test_older_state_without_initiation_response_snapshots_remains_loadable(context):
+    payload = context.processor.pending_payment.model_dump(mode="json")
+    for field in ("incoming_payment", "quote", "outgoing_grant"):
+        del payload[field]
+    restored = PendingIncomingPaymentTransaction.model_validate(payload)
+    assert (
+        restored.incoming_payment is restored.quote is restored.outgoing_grant is None
+    )
