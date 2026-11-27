@@ -501,6 +501,36 @@ These methods accept HTTP(S) strings, `AnyUrl` or `httpx.URL` values. `create` t
 
 Creation and private reads return `IncomingPaymentResponse` with methods and optional metadata; completion returns `IncomingPayment` and validates its completed state. See the incoming-payment model section for the amount and state checks. The existing `post_create_payment(payment, resource_server_endpoint, access_token)`, `get_incoming_payment(payment_id, resource_server_endpoint, access_token)` and `post_complete_incoming_payment(payment_id, resource_server_endpoint, access_token)` helpers keep their parameter names and order and delegate to these operations. Their conventional paths also preserve base-URL queries before appended route suffixes.
 
+For async applications, `AsyncIncomingPayments` exposes the same operations and response models:
+
+```python
+import logging
+
+from open_payments_sdk import AsyncHttpClient
+from open_payments_sdk.api.async_resource import AsyncIncomingPayments
+from open_payments_sdk.models.resource import IncomingPaymentRequest
+
+async def create_and_read_incoming(
+    key_id, private_key, wallet, create_access_token, read_access_token
+):
+    async with AsyncHttpClient(10) as transport:
+        incoming = AsyncIncomingPayments(
+            keyid=key_id,
+            private_key=private_key,
+            logger=logging.getLogger(__name__),
+            http_client=transport,
+        )
+        created = await incoming.create(
+            wallet.resourceServer,
+            IncomingPaymentRequest(walletAddress=wallet.id),
+            create_access_token,
+        )
+        current = await incoming.get(created.id, read_access_token)
+        return created, current
+```
+
+Use `await incoming.complete(current.id, complete_access_token)` to complete a payment explicitly. `await incoming.get_public(current.id)` reads its public details without a token or signature. `await incoming.list(resource_server, query, access_token)` returns one validated page; request further pages explicitly. The four compatibility helpers are also awaited. Cancellation propagates without replay; a dispatched create or completion request may have taken effect even if its response was not received.
+
 ## Payment listing operations
 
 Both authenticated payment clients expose `list(url, query, access_token)`. Supply the resource-server base URL and a `PaymentListQuery` for the wallet and desired page direction:
