@@ -2,10 +2,10 @@
 Resource Server Module
 """
 
-from logging import Logger
+from logging import Logger, LoggerAdapter
 from open_payments_sdk.errors import _sdk_operation
 from open_payments_sdk.gnap_utils.security import SecurityBase
-from open_payments_sdk.http import HttpClient, _request_result
+from open_payments_sdk.http import HttpClient, HttpClientProtocol, _request_result
 from open_payments_sdk.models.resource import (
     IncomingPayment,
     IncomingPaymentRequest,
@@ -30,7 +30,11 @@ class IncomingPayments(SecurityBase):
     """
 
     def __init__(
-        self, keyid: str, private_key: str, logger: Logger, http_client: HttpClient
+        self,
+        keyid: str,
+        private_key: str,
+        logger: Logger | LoggerAdapter,
+        http_client: HttpClient | HttpClientProtocol,
     ):
         super().__init__(keyid=keyid, private_key=private_key, logger=logger)
         self.http_client = http_client
@@ -132,7 +136,11 @@ class OutgoingPayments(SecurityBase):
     """
 
     def __init__(
-        self, keyid: str, private_key: str, logger: Logger, http_client: HttpClient
+        self,
+        keyid: str,
+        private_key: str,
+        logger: Logger | LoggerAdapter,
+        http_client: HttpClient | HttpClientProtocol,
     ):
         super().__init__(keyid=keyid, private_key=private_key, logger=logger)
         self.http_client = http_client
@@ -221,7 +229,11 @@ class Quotes(SecurityBase):
     """
 
     def __init__(
-        self, keyid: str, private_key: str, logger: Logger, http_client: HttpClient
+        self,
+        keyid: str,
+        private_key: str,
+        logger: Logger | LoggerAdapter,
+        http_client: HttpClient | HttpClientProtocol,
     ):
         super().__init__(keyid=keyid, private_key=private_key, logger=logger)
         self.http_client = http_client

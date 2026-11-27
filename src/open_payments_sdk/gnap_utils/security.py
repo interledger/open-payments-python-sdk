@@ -2,7 +2,7 @@
 Shared class for making secure requests
 """
 
-from logging import Logger
+from logging import Logger, LoggerAdapter
 from typing import Sequence
 from http_message_signatures import HTTPMessageSigner, algorithms
 from http_message_signatures.exceptions import HTTPMessageSignaturesException
@@ -21,7 +21,7 @@ class SecurityBase:
     Base class to provide shared functionality for making authenticated requests
     """
 
-    def __init__(self, keyid: str, private_key: str, logger: Logger):
+    def __init__(self, keyid: str, private_key: str, logger: Logger | LoggerAdapter):
         self.key_manager = KeyManager()
         self.hash_manager = HashManager()
         try:

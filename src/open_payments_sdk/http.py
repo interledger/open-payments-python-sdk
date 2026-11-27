@@ -2,7 +2,7 @@
 
 from math import isfinite
 from threading import Lock
-from typing import TypeVar, overload
+from typing import Callable, Protocol, TypeVar, overload
 
 import httpx
 from httpx import Client, Request, Response
@@ -142,7 +142,23 @@ def _timeout(value: float | httpx.Timeout | None) -> httpx.Timeout:
     return timeout
 
 
-class HttpClient:
+class HttpClientProtocol(Protocol):
+    """Minimal interface accepted for a caller-owned SDK request transport."""
+
+    def build_request(
+        self,
+        method: str,
+        url: str,
+        headers=None,
+        data=None,
+        json: dict | None = None,
+        params: dict | None = None,
+    ) -> Request: ...
+
+    def send(self, request: Request) -> Response: ...
+
+
+class HttpClient(HttpClientProtocol):
     """Reusable synchronous transport with owned or borrowed HTTPX connections.
 
     Owned clients are initialized on first send. Closing this wrapper never
@@ -209,8 +225,8 @@ class HttpClient:
         url: str,
         headers=None,
         data=None,
-        json: dict = None,
-        params: dict = None,
+        json: dict | None = None,
+        params: dict | None = None,
     ) -> Request:
         self._check_open()
         timeout = _timeout(self.http_timeout)
@@ -245,3 +261,60 @@ class HttpClient:
                     reason="closed", method=request.method, url=request.url
                 ) from None
             raise
+
+
+class _ClientSession(HttpClientProtocol):
+    """Isolate SDK configuration and lifecycle from a borrowed transport."""
+
+    def __init__(
+        self,
+        transport: HttpClientProtocol,
+        headers: httpx.Headers,
+        close_transport: Callable[[], None] | None = None,
+    ):
+        self._transport = transport
+        self._headers = headers.copy()
+        self._close_transport = close_transport
+        self._closed = False
+        self._lifecycle_lock = Lock()
+
+    @property
+    def is_closed(self) -> bool:
+        with self._lifecycle_lock:
+            return self._closed or getattr(self._transport, "is_closed", False) is True
+
+    def _check_open(self) -> None:
+        if self.is_closed:
+            raise ConfigurationError(reason="closed")
+
+    def build_request(
+        self,
+        method: str,
+        url: str,
+        headers=None,
+        data=None,
+        json: dict | None = None,
+        params: dict | None = None,
+    ) -> Request:
+        self._check_open()
+        try:
+            merged = self._headers.copy()
+            if headers is not None:
+                merged.update(headers)
+        except (ValueError, TypeError):
+            raise InputError(method=method, url=url, reason="request") from None
+        return self._transport.build_request(
+            method=method, url=url, headers=merged, data=data, json=json, params=params
+        )
+
+    def send(self, request: Request) -> Response:
+        self._check_open()
+        return self._transport.send(request=request)
+
+    def close(self) -> None:
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+            self._closed = True
+        if self._close_transport is not None:
+            self._close_transport()

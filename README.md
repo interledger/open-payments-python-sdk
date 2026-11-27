@@ -177,6 +177,34 @@ Public-model `kid` follows the specification's string contract. Key generation, 
 
 Grant identities, display and finish URIs, listing wallet URIs and payment resource URIs validate complete RFC3986 syntax, including authority, path, query and fragment boundaries. String fields in identities and display metadata retain valid input spelling; native `AnyUrl` values are checked after conversion to their existing normalized spelling. Invalid escapes, unescaped brackets outside IP literals, repeated fragment delimiters and malformed authority fields are rejected. IPv6 literals and properly percent-encoded components remain supported.
 
+## Client configuration and lifecycle
+
+`Configuration` accepts `http_timeout`, `user_agent`, extra `headers`, and a standard-library `logger` or `LoggerAdapter`. Existing `Configuration()` construction and setting its attributes before constructing a client continue to work. Defaults are a ten-second timeout, `User-Agent: open-payments-sdk/python`, and `Accept: application/json`.
+
+```python
+from open_payments_sdk.configuration import Configuration
+from open_payments_sdk.client.client import OpenPaymentsClient
+
+cfg = Configuration(
+    http_timeout=15.0,
+    user_agent="my-application/1.0",
+    headers={"X-Application-ID": "checkout"},
+)
+with OpenPaymentsClient(
+    keyid=key_id,
+    private_key=private_key,
+    client_wallet_address="https://wallet.example/client",
+    cfg=cfg,
+) as client:
+    wallet = client.wallet.get_wallet_address("https://wallet.example/alice")
+```
+
+Configuration is validated and copied when the SDK client is constructed. Later configuration/header/timeout mutations do not change that client's captured defaults. Extra headers override the default `Accept` and `User-Agent` values; header names and values must be valid ASCII HTTP fields. Authentication, signatures, digests, JSON content type, framing, hop-by-hop and cookie headers are reserved for request preparation. Tokens stay per-operation inputs. Configuration headers are applied before signing and do not mutate caller dictionaries or transport defaults.
+
+The SDK client supports `close()`, `is_closed` and context-manager use. Closing it prevents further calls through its resources, including previously saved resource references, and releases its owned transport. Pass a native `httpx.Client` through `http_client=` to borrow its pool; SDK closure leaves that native client open. Existing SDK `HttpClient` or custom `HttpClientProtocol` backends are also borrowed: `client.http_client` keeps the supplied object, and the caller owns its cleanup. An injected SDK/custom backend retains its own timeout; the configured SDK timeout applies to SDK-created transports and adapters around native HTTPX clients. Finish concurrent requests before closing.
+
+The default SDK logger is `open_payments_sdk.client.client`, with a single `NullHandler` and no per-client stream handlers, following [Python's library logging guidance](https://docs.python.org/3.10/howto/logging.html#configuring-logging-for-a-library). Supplying a logger preserves its handlers, levels and propagation settings. The SDK does not configure the root or HTTPX loggers; application logging configuration controls those separately. The existing `get_log_handler()` helper remains available for explicit use and is no longer installed automatically during client construction.
+
 ## HTTP transport ownership
 
 `HttpClient` reuses a single HTTPX connection pool, initialized on its first send. Use its context manager or call `close()` when requests have finished. Construction, context entry and request preparation perform no network requests.
