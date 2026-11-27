@@ -343,6 +343,29 @@ For polling, omit `interact_ref` (or pass `None`) to send a signed bodyless POST
 
 To cancel, call `authenticated_client.grants.cancel(latest.uri, latest.access_token.value)`. A successful cancellation returns `None` for the specified HTTP 204 acknowledgement. The existing `delete_grant(req_id, auth_server_endpoint, access_token)` helper retains its conventional `/continue/{id}` URL adapter. Signed continuation and cancellation requests reject redirects without replaying the request.
 
+## Access token rotation and revocation
+
+Use the access token's current `manage` URI and `value` with `access_tokens.rotate`. The result is an `AccessTokenRotationResponse` matching the specified `{ "access_token": ... }` envelope, including permitted envelope extensions. Retain the replacement token's value, management URI, permissions and expiry metadata for subsequent operations:
+
+```python
+current = approved_grant.access_token
+rotated = authenticated_client.access_tokens.rotate(
+    url=current.manage,
+    access_token=current.value,
+)
+current = rotated.access_token
+
+# Use the replacement credentials when revoking the token.
+authenticated_client.access_tokens.revoke(
+    url=current.manage,
+    access_token=current.value,
+)
+```
+
+Both methods accept complete HTTP(S) URLs, including opaque paths and queries, and send signed bodyless requests. Rotation requires an HTTP 200 response with the envelope; revocation requires HTTP 204 and returns `None` without decoding JSON. Each call uses the supplied credentials. Earlier results remain unchanged, and the SDK does not store replacement tokens, schedule rotation, follow signed redirects or retry.
+
+The compatibility helpers keep their existing parameter names and order: `post_rotate_access_token(token_id, auth_server_endpoint, access_token)` and `delete_access_token(token_id, auth_server_endpoint, access_token)`. They retain the conventional `/token/{id}` URL adapter. The rotation helper now validates the correct response envelope and returns its nested `AccessToken`, preserving its existing Python return type. A bare token response is rejected as invalid protocol data.
+
 ## SDK operation errors
 
 Synchronous wallet, grant, token and payment operations raise subclasses of `OpenPaymentsError` from `open_payments_sdk.errors`: `ConfigurationError`, `InputError`, `SigningError`, `TransportError`, `TransportTimeoutError`, `HTTPError` or `ResponseError`. Direct Pydantic model construction and standalone cryptography helpers retain their existing exceptions. A timeout is also a transport error; it does not establish whether the server completed a payment. The SDK does not retry failed calls.

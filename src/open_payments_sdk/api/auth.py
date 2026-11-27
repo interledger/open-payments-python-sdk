@@ -24,6 +24,7 @@ from open_payments_sdk.http import (
 )
 from open_payments_sdk.models.auth import AccessToken, Grant
 from open_payments_sdk.models.auth import (
+    AccessTokenRotationResponse,
     AccessOutgoing,
     GrantContinueResponse,
     GrantRequest,
@@ -194,38 +195,44 @@ class AccessTokens(SecurityBase):
         self.http_client = http_client
 
     @_sdk_operation("tokens.rotate")
-    def post_rotate_access_token(
-        self, token_id: str, auth_server_endpoint: str, access_token: str
-    ) -> AccessToken:
-        """
-        Rotate Access Token
-        """
-        base_url = auth_server_endpoint.rstrip("/")
-        url = f"{base_url}/token/{token_id}"
+    def rotate(self, url: UrlInput, access_token: str) -> AccessTokenRotationResponse:
+        """Rotate at the returned management URI and retain the full envelope."""
         return _execute_request(
             self.http_client,
             "POST",
-            url,
-            AccessToken,
+            validate_request_url(url),
+            AccessTokenRotationResponse,
             access_token=access_token,
             signer=self,
         )
 
     @_sdk_operation("tokens.revoke")
-    def delete_access_token(
-        self, token_id: str, auth_server_endpoint: str, access_token: str
-    ) -> None:
-        """
-        Delete Access Token
-        """
-        base_url = auth_server_endpoint.rstrip("/")
-        url = f"{base_url}/token/{token_id}"
+    def revoke(self, url: UrlInput, access_token: str) -> None:
+        """Revoke at the returned management URI; successful HTTP 204 returns None."""
         _execute_request(
             self.http_client,
             "DELETE",
-            url,
+            validate_request_url(url),
             None,
             access_token=access_token,
             signer=self,
             expected_status=204,
         )
+
+    @_sdk_operation("tokens.rotate")
+    def post_rotate_access_token(
+        self, token_id: str, auth_server_endpoint: str, access_token: str
+    ) -> AccessToken:
+        """Compatibility adapter returning the token from the rotation envelope."""
+        base_url = auth_server_endpoint.rstrip("/")
+        url = f"{base_url}/token/{token_id}"
+        return self.rotate(url, access_token).access_token
+
+    @_sdk_operation("tokens.revoke")
+    def delete_access_token(
+        self, token_id: str, auth_server_endpoint: str, access_token: str
+    ) -> None:
+        """Compatibility adapter retaining the conventional /token/{id} URL."""
+        base_url = auth_server_endpoint.rstrip("/")
+        url = f"{base_url}/token/{token_id}"
+        self.revoke(url, access_token)
