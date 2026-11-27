@@ -3,7 +3,9 @@ Resource Server Module
 """
 
 from logging import Logger, LoggerAdapter
-from open_payments_sdk.errors import _sdk_operation
+from typing import Literal, TypeVar
+
+from open_payments_sdk.errors import ResponseError, ValidationIssue, _sdk_operation
 from open_payments_sdk.gnap_utils.security import SecurityBase
 from open_payments_sdk.http import (
     HttpClient,
@@ -25,6 +27,47 @@ from open_payments_sdk.models.resource import (
     QuoteRequest,
 )
 from open_payments_sdk.utils.urls import UrlInput, validate_request_url
+
+_IncomingPaymentType = TypeVar("_IncomingPaymentType", bound=IncomingPayment)
+
+
+def _validate_incoming_payment(
+    payment: _IncomingPaymentType,
+    *,
+    method: str,
+    url: str,
+    status: int,
+    state: Literal["created", "completed"] | None = None,
+) -> _IncomingPaymentType:
+    """Apply operation semantics without narrowing reusable protocol models."""
+    issues = []
+    if payment.incomingAmount is not None:
+        for field in ("assetCode", "assetScale"):
+            if getattr(payment.incomingAmount, field) != getattr(
+                payment.receivedAmount, field
+            ):
+                issues.append(
+                    ValidationIssue(("incomingAmount", field), "asset_mismatch")
+                )
+    if state == "created":
+        # Amounts preserve leading zeros, including strings beyond int's digit limit.
+        if payment.receivedAmount.value.lstrip("0"):
+            issues.append(
+                ValidationIssue(("receivedAmount", "value"), "nonzero_received_amount")
+            )
+        if payment.completed:
+            issues.append(ValidationIssue(("completed",), "created_completed"))
+    elif state == "completed" and not payment.completed:
+        issues.append(ValidationIssue(("completed",), "incomplete"))
+    if issues:
+        raise ResponseError(
+            method=method,
+            url=url,
+            status=status,
+            reason="validation",
+            validation_errors=tuple(issues),
+        )
+    return payment
 
 
 def _get_public_incoming_payment(
@@ -76,22 +119,25 @@ class IncomingPayments(SecurityBase):
         payment: IncomingPaymentRequest,
         resource_server_endpoint: str,
         access_token: str,
-    ) -> IncomingPayment:
+    ) -> IncomingPaymentResponse:
         """
         Create Incoming Payment
         """
         base_url = resource_server_endpoint.rstrip("/")
         url = f"{base_url}/incoming-payments"
-        return _execute_request(
+        result = _execute_request(
             self.http_client,
             "POST",
             url,
-            IncomingPayment,
+            IncomingPaymentResponse,
             body=payment,
             body_model=IncomingPaymentRequest,
             access_token=access_token,
             signer=self,
             expected_status=201,
+        )
+        return _validate_incoming_payment(
+            result, method="POST", url=url, status=201, state="created"
         )
 
     @_sdk_operation("incoming_payments.list")
@@ -123,7 +169,7 @@ class IncomingPayments(SecurityBase):
         """
         base_url = resource_server_endpoint.rstrip("/")
         url = f"{base_url}/incoming-payments/{payment_id}"
-        return _execute_request(
+        result = _execute_request(
             self.http_client,
             "GET",
             url,
@@ -131,6 +177,7 @@ class IncomingPayments(SecurityBase):
             access_token=access_token,
             signer=self,
         )
+        return _validate_incoming_payment(result, method="GET", url=url, status=200)
 
     @_sdk_operation("incoming_payments.complete")
     def post_complete_incoming_payment(
@@ -141,13 +188,16 @@ class IncomingPayments(SecurityBase):
         """
         base_url = resource_server_endpoint.rstrip("/")
         url = f"{base_url}/incoming-payments/{payment_id}/complete"
-        return _execute_request(
+        result = _execute_request(
             self.http_client,
             "POST",
             url,
             IncomingPayment,
             access_token=access_token,
             signer=self,
+        )
+        return _validate_incoming_payment(
+            result, method="POST", url=url, status=200, state="completed"
         )
 
 

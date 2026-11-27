@@ -488,7 +488,11 @@ def test_invalid_assignments_leave_existing_models_unchanged():
 def test_real_incoming_dispatch_retains_models_and_valid_request_signatures(
     operation, op_client, http_mock, keyid_private_key
 ):
-    payload = PRIVATE if operation != "complete" else DETAILED
+    payload = copy.deepcopy(PRIVATE if operation != "complete" else DETAILED)
+    if operation == "create":
+        payload["receivedAmount"]["value"] = "0"
+    elif operation == "complete":
+        payload["completed"] = True
     http_mock.responses.append(
         httpx.Response(201 if operation == "create" else 200, json=payload)
     )
