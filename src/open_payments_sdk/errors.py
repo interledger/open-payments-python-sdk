@@ -153,19 +153,34 @@ def _validation_issues(
     error: ValidationError, fields: frozenset[str]
 ) -> tuple[ValidationIssue, ...]:
     # Extra field/map keys and union labels can be supplied by the peer. Keep
-    # only schema-declared property names and numeric indexes in safe locations.
-    return tuple(
-        ValidationIssue(
-            tuple(
-                part if isinstance(part, int) or part in fields else "<field>"
-                for part in item["loc"]
-            ),
-            item["type"],
+    # only schema-declared property names and actual numeric array indexes.
+    issues = []
+    for item in error.errors(
+        include_input=False, include_context=False, include_url=False
+    ):
+        location = item["loc"]
+        # Invalid model keys end the path. String-key validation uses a
+        # terminal [key] marker; a peer field with that name is ordinary data.
+        key_positions = set()
+        if item["type"] == "invalid_key":
+            key_positions.add(len(location) - 1)
+        elif (
+            item["type"] in {"string_type", "string_unicode"}
+            and len(location) > 1
+            and location[-1] == "[key]"
+        ):
+            key_positions.add(len(location) - 2)
+        safe_location = tuple(
+            (
+                part
+                if index not in key_positions
+                and (isinstance(part, int) or part in fields)
+                else "<field>"
+            )
+            for index, part in enumerate(location)
         )
-        for item in error.errors(
-            include_input=False, include_context=False, include_url=False
-        )
-    )
+        issues.append(ValidationIssue(safe_location, item["type"]))
+    return tuple(issues)
 
 
 P = ParamSpec("P")

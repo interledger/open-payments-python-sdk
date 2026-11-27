@@ -705,3 +705,32 @@ def test_public_error_types_have_distinct_kinds_and_safe_arguments():
         assert error.validation_errors == ()
         assert_safe(error)
     assert ValidationIssue(("assetScale",), "int_type").location == ("assetScale",)
+
+
+def test_literal_key_marker_field_keeps_the_actual_response_array_index(
+    op_client, http_mock
+):
+    payload = {
+        "id": RECEIVER,
+        "authServer": AUTH,
+        "completed": False,
+        "receivedAmount": {"value": "0", "assetCode": "USD", "assetScale": 2},
+        "createdAt": "2026-11-27T00:00:00Z",
+        "methods": [
+            {"type": "ilp", "ilpAddress": "test.first", "sharedSecret": "AA"},
+            {
+                "type": "ilp",
+                "ilpAddress": "test.second",
+                "sharedSecret": "BB",
+                "[key]": SECRET,
+            },
+        ],
+    }
+    http_mock.responses.append(httpx.Response(200, json=payload))
+    with pytest.raises(ResponseError) as caught:
+        op_client.incoming_payments.get_public(RECEIVER)
+    assert caught.value.reason == "validation"
+    assert caught.value.validation_errors == (
+        ValidationIssue(("methods", 1, "<field>"), "extra_forbidden"),
+    )
+    assert_safe(caught.value)

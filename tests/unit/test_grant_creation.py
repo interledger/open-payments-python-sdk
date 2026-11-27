@@ -14,6 +14,7 @@ from open_payments_sdk import (
     InputError,
     OpenPaymentsClient,
     ResponseError,
+    ValidationIssue,
     key_to_jwk,
     load_private_key,
     verify_request_signature,
@@ -223,6 +224,80 @@ def test_invalid_explicit_client_never_falls_back_to_default(
         caught.value.validation_errors
     )
     assert SECRET not in "".join(traceback.format_exception(caught.value))
+    assert not http_mock.requests
+
+
+@pytest.mark.parametrize("numeric_key", [0, 1, 987654321012345])
+@pytest.mark.parametrize("where", ["root", "provider", "limits"])
+def test_numeric_mapping_keys_are_redacted_without_losing_real_list_indexes(
+    op_client, http_mock, numeric_key, where
+):
+    payload = {"access_token": copy.deepcopy(ACCESS)}
+    if where == "root":
+        payload[numeric_key] = SECRET
+        expected = ("<field>",)
+    elif where == "provider":
+        payload["provider"] = [None, {numeric_key: SECRET}]
+        expected = ("<field>", "<field>", 1, "<field>", "<field>", "<field>")
+    else:
+        payload["access_token"]["access"].append(
+            {
+                "type": "outgoing-payment",
+                "actions": [],
+                "identifier": WALLET,
+                "limits": {numeric_key: SECRET},
+            }
+        )
+        expected = (
+            "access_token",
+            "<field>",
+            "access",
+            1,
+            "<field>",
+            "limits",
+            "<field>",
+            "<field>",
+        )
+    before = copy.deepcopy(payload)
+    with pytest.raises(InputError) as caught:
+        op_client.grants.request(URL, payload)
+    assert caught.value.operation == "grants.request" and caught.value.reason == "body"
+    assert any(issue.location == expected for issue in caught.value.validation_errors)
+    diagnostics = (
+        str(caught.value) + repr(caught.value) + repr(caught.value.validation_errors)
+    )
+    diagnostics += "".join(traceback.format_exception(caught.value))
+    assert SECRET not in diagnostics and "987654321012345" not in diagnostics
+    assert payload == before and not http_mock.requests
+
+
+def test_invalid_array_values_keep_their_actual_numeric_indexes(op_client, http_mock):
+    body = {
+        "access_token": {
+            "access": [{"type": "incoming-payment", "actions": ["create", SECRET]}]
+        }
+    }
+    with pytest.raises(InputError) as caught:
+        op_client.grants.request(URL, body)
+    assert any(
+        issue.location
+        == ("access_token", "<field>", "access", 0, "<field>", "actions", 1)
+        for issue in caught.value.validation_errors
+    )
+    assert SECRET not in repr(caught.value.validation_errors)
+    assert not http_mock.requests
+
+
+def test_invalid_utf8_dictionary_keys_have_safe_validation_locations(
+    op_client, http_mock
+):
+    body = {"access_token": copy.deepcopy(ACCESS), "provider": {b"\xff": SECRET}}
+    with pytest.raises(InputError) as caught:
+        op_client.grants.request(URL, body)
+    assert caught.value.validation_errors == (
+        ValidationIssue(("<field>", "<field>", "<field>", "<field>"), "string_unicode"),
+    )
+    assert SECRET not in repr(caught.value.validation_errors)
     assert not http_mock.requests
 
 
