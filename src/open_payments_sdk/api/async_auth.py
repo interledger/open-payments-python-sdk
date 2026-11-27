@@ -13,6 +13,8 @@ from open_payments_sdk.http import (
     _async_execute_request,
 )
 from open_payments_sdk.models.auth import (
+    AccessToken,
+    AccessTokenRotationResponse,
     Grant,
     GrantContinueResponse,
     GrantRequest,
@@ -115,3 +117,61 @@ class AsyncGrants(SecurityBase):
         """Retain conventional /continue/{id} compatibility URL construction."""
         base_url = auth_server_endpoint.rstrip("/")
         await self.cancel(f"{base_url}/continue/{req_id}", access_token)
+
+
+class AsyncAccessTokens(SecurityBase):
+    """Signed access-token management at the returned full management URIs."""
+
+    def __init__(
+        self,
+        keyid: str,
+        private_key: str,
+        logger: Logger | LoggerAdapter,
+        http_client: AsyncHttpClientProtocol,
+    ):
+        super().__init__(keyid=keyid, private_key=private_key, logger=logger)
+        self.http_client = http_client
+
+    @_async_sdk_operation("tokens.rotate")
+    async def rotate(
+        self, url: UrlInput, access_token: str
+    ) -> AccessTokenRotationResponse:
+        """Rotate once and return the complete typed response envelope."""
+        return await _async_execute_request(
+            self.http_client,
+            "POST",
+            validate_request_url(url),
+            AccessTokenRotationResponse,
+            access_token=access_token,
+            signer=self,
+        )
+
+    @_async_sdk_operation("tokens.revoke")
+    async def revoke(self, url: UrlInput, access_token: str) -> None:
+        """Revoke once; the specified HTTP 204 acknowledgement returns None."""
+        await _async_execute_request(
+            self.http_client,
+            "DELETE",
+            validate_request_url(url),
+            None,
+            access_token=access_token,
+            signer=self,
+            expected_status=204,
+        )
+
+    @_async_sdk_operation("tokens.rotate")
+    async def post_rotate_access_token(
+        self, token_id: str, auth_server_endpoint: str, access_token: str
+    ) -> AccessToken:
+        """Retain the compatibility URL adapter and bare access-token result."""
+        base_url = auth_server_endpoint.rstrip("/")
+        result = await self.rotate(f"{base_url}/token/{token_id}", access_token)
+        return result.access_token
+
+    @_async_sdk_operation("tokens.revoke")
+    async def delete_access_token(
+        self, token_id: str, auth_server_endpoint: str, access_token: str
+    ) -> None:
+        """Retain conventional /token/{id} compatibility URL construction."""
+        base_url = auth_server_endpoint.rstrip("/")
+        await self.revoke(f"{base_url}/token/{token_id}", access_token)

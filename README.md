@@ -446,6 +446,27 @@ Both methods accept complete HTTP(S) URLs, including opaque paths and queries, a
 
 The compatibility helpers keep their existing parameter names and order: `post_rotate_access_token(token_id, auth_server_endpoint, access_token)` and `delete_access_token(token_id, auth_server_endpoint, access_token)`. They retain the conventional `/token/{id}` URL adapter. The rotation helper now validates the correct response envelope and returns its nested `AccessToken`, preserving its existing Python return type. A bare token response is rejected as invalid protocol data.
 
+`AsyncAccessTokens` supports the same operations with an async transport and existing signing credentials:
+
+```python
+import logging
+
+from open_payments_sdk import AsyncHttpClient
+from open_payments_sdk.api.async_auth import AsyncAccessTokens
+
+async def rotate_access(key_id, private_key, current):
+    async with AsyncHttpClient(10) as transport:
+        tokens = AsyncAccessTokens(
+            keyid=key_id,
+            private_key=private_key,
+            logger=logging.getLogger(__name__),
+            http_client=transport,
+        )
+        return await tokens.rotate(current.manage, current.value)
+```
+
+Retain the returned envelope and use its `.access_token` for subsequent calls. To revoke it, use `await tokens.revoke(current.manage, current.value)` while the transport is open. Both compatibility helpers are also awaited and retain their synchronous return types. Closing the transport does not revoke an access token. Cancellation propagates without retry or automatic revocation; if a rotation was dispatched, its outcome may be unknown, so reconcile with the authorization server before attempting another rotation.
+
 ## Incoming payment operations
 
 Create an incoming payment using the wallet's resource-server base URL and an `IncomingPaymentRequest`. Use the complete returned payment `id` for private reads and completion, supplying the access token authorized for each action:
