@@ -51,6 +51,7 @@ class OpenPaymentsProcessor:
         redirect_uri: str,
         seller: OpenPaymentAccount | None = None,
         buyer: str | None = None,
+        pending_payment: PendingPayment | None = None,
     ) -> None:
         if recipient is not None and seller is not None:
             raise ValueError("Supply only one of recipient and seller")
@@ -62,24 +63,41 @@ class OpenPaymentsProcessor:
             raise ValueError("A recipient signing account is required")
         if sender is None:
             raise ValueError("A sender wallet address is required")
-        if not http_client:
-            http_client = HttpClient(http_timeout=10.0)
-        self.http_client = http_client
         self.recipient = recipient
         self.sender = paymentsparser.normalise_wallet_address(wallet_address=sender)
+        self._restored = pending_payment is not None
+        if pending_payment is not None:
+            if not isinstance(pending_payment, PendingPayment):
+                raise ValueError("A stored pending payment transaction is required")
+            if pending_payment.recipient.id != AnyUrl(
+                self.recipient.walletAddressUrl
+            ) or pending_payment.sender.id != AnyUrl(self.sender):
+                raise ValueError(
+                    "Stored payment state does not match processor wallets"
+                )
+        if http_client is None:
+            http_client = HttpClient(http_timeout=10.0)
+        self.http_client = http_client
         self.client = OpenPaymentsClient(
             keyid=self.recipient.keyId,
             private_key=self.recipient.privateKey,
             client_wallet_address=self.recipient.walletAddressUrl,
             http_client=self.http_client,
         )
-        self.recipient_wallet = self.client.wallet.get_wallet_address(
-            self.recipient.walletAddressUrl
-        )
-        self.sender_wallet = self.client.wallet.get_wallet_address(self.sender)
-        self.pending_payment = PendingPayment(
-            id=ULID(), recipient=self.recipient_wallet, sender=self.sender_wallet
-        )
+        if pending_payment is not None:
+            # Bind wallet identities separately while retaining the same claimable
+            # state object for the application's durable persistence.
+            self.recipient_wallet = pending_payment.recipient.model_copy(deep=True)
+            self.sender_wallet = pending_payment.sender.model_copy(deep=True)
+            self.pending_payment = pending_payment
+        else:
+            self.recipient_wallet = self.client.wallet.get_wallet_address(
+                self.recipient.walletAddressUrl
+            )
+            self.sender_wallet = self.client.wallet.get_wallet_address(self.sender)
+            self.pending_payment = PendingPayment(
+                id=ULID(), recipient=self.recipient_wallet, sender=self.sender_wallet
+            )
         self.redirect_uri = f"{redirect_uri}{self.pending_payment.id}"
 
     @property
@@ -212,6 +230,8 @@ class OpenPaymentsProcessor:
         Create an incoming payment and quote, then request an outgoing payment
         grant and return the sender's interaction redirect URI.
         """
+        if self._restored:
+            raise ValueError("A restored payment cannot restart initiation")
         payment_request = self._incoming_payment_request(amount)
         amount = payment_request.incomingAmount.value
         with _transaction_lock:

@@ -92,6 +92,36 @@ Retaining a result does not reset `completion_started` or make a repeated callba
 
 The in-process guard synchronizes calls sharing the same pending model. Your application must atomically claim the persisted record before completion to coordinate separate workers, reloaded records or copied models, and retain that durable claim across crashes. The SDK does not provide a database transaction or replay store.
 
+### Restore saved payment state
+
+Pass a validated `PendingPayment` through the constructor's `pending_payment` argument to continue or reconcile a saved transaction:
+
+```python
+from open_payments_sdk.process.crud import OpenPaymentsProcessor
+from open_payments_sdk.process.models import PendingPayment
+
+restored = PendingPayment.model_validate_json(saved_state_json)
+processor = OpenPaymentsProcessor(
+    recipient=account,
+    sender=str(restored.sender.id),
+    redirect_uri=callback_prefix,
+    http_client=http_client,
+    pending_payment=restored,
+)
+try:
+    outgoing = processor.complete_payment(
+        interact_ref=interact_ref,
+        received_hash=received_hash,
+        pending_payment=processor.pending_payment,
+    )
+finally:
+    save_state(restored.model_dump_json(exclude_unset=True))
+```
+
+Use the saved canonical wallet IDs for the expected sender and recipient, and supply currently authorized signing credentials in `account`. Restoration verifies those wallet identities and uses copies of the stored wallet metadata. It makes no discovery requests and generates no new transaction ID or nonce. Callback verification still uses the original stored grant endpoint and interaction context. Signing credentials may be updated by supplying a new account configuration; the pending state contains no private signing key.
+
+`processor.pending_payment` is the same model passed by the application, so completion claims and validated response snapshots are available for persistence on success or failure. Incomplete or already-claimed records retain the existing completion checks. Both initiation entry points reject a restored transaction, including partial records; use its saved context for reconciliation rather than starting over. The application remains responsible for validating its session deadline and grant expiry policy before completion and for respecting continuation wait values.
+
 ## Architecture decisions
 
 This module is opinionated and implements the process in ways that may conflict with your way of working. If you find this challenging, the API is available to you.
