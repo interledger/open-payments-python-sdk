@@ -293,6 +293,28 @@ All synchronous wallet, grant, token and payment methods share one request pipel
 
 Required body/query arguments must match the operation's SDK request model. Invalid body/query values, including `None`, raw dictionaries and unrelated models, raise `InputError` before their fields are serialized. Required access tokens must be strings; invalid values raise `InputError` before dispatch. An empty polling model such as `InteractRef()` sends a signed `{}` JSON body; bodyless operations send no JSON payload.
 
+## Grant continuation and cancellation
+
+Use the latest returned continuation URI and continuation access token with an authenticated client. `continue_grant` and `cancel` accept complete HTTP(S) URLs, including opaque path prefixes and queries, without reconstructing the endpoint from an ID:
+
+```python
+from open_payments_sdk.models.auth import InteractRef
+
+# Verify the callback hash and session correlation before using its reference.
+continued = authenticated_client.grants.continue_grant(
+    url=pending.cont.uri,
+    access_token=pending.cont.access_token.value,
+    interact_ref=InteractRef(interact_ref=verified_interaction_ref),
+)
+
+# Persist both updated continuation values for the next operation.
+latest = continued.cont
+```
+
+For polling, omit `interact_ref` (or pass `None`) to send a signed bodyless POST. Passing `InteractRef()` explicitly sends signed `{}` JSON. The existing `post_grant_continuation_request(interact_ref, continue_uri, access_token)` helper keeps its required model argument and existing JSON behavior. Pending, access-token, subject-only and combined continuation results are returned as `GrantContinueResponse`; retain the new `.cont` URI and token after every response. The application must respect `.cont.wait` when scheduling another continuation request. The SDK does not sleep, poll automatically or retry a failed request.
+
+To cancel, call `authenticated_client.grants.cancel(latest.uri, latest.access_token.value)`. A successful cancellation returns `None` for the specified HTTP 204 acknowledgement. The existing `delete_grant(req_id, auth_server_endpoint, access_token)` helper retains its conventional `/continue/{id}` URL adapter. Signed continuation and cancellation requests reject redirects without replaying the request.
+
 ## SDK operation errors
 
 Synchronous wallet, grant, token and payment operations raise subclasses of `OpenPaymentsError` from `open_payments_sdk.errors`: `ConfigurationError`, `InputError`, `SigningError`, `TransportError`, `TransportTimeoutError`, `HTTPError` or `ResponseError`. Direct Pydantic model construction and standalone cryptography helpers retain their existing exceptions. A timeout is also a transport error; it does not establish whether the server completed a payment. The SDK does not retry failed calls.

@@ -4,15 +4,21 @@ Grants Module
 
 from logging import Logger, LoggerAdapter
 
-from open_payments_sdk.errors import _sdk_operation
+from open_payments_sdk.errors import InputError, _sdk_operation
 from open_payments_sdk.gnap_utils.security import SecurityBase
-from open_payments_sdk.http import HttpClient, HttpClientProtocol, _execute_request
+from open_payments_sdk.http import (
+    HttpClient,
+    HttpClientProtocol,
+    _NOT_GIVEN,
+    _execute_request,
+)
 from open_payments_sdk.models.auth import AccessToken, Grant
 from open_payments_sdk.models.auth import (
     GrantContinueResponse,
     GrantRequest,
     InteractRef,
 )
+from open_payments_sdk.utils.urls import UrlInput, validate_request_url
 
 
 class Grants(SecurityBase):
@@ -51,21 +57,48 @@ class Grants(SecurityBase):
         )
 
     @_sdk_operation("grants.continue")
-    def post_grant_continuation_request(
-        self, interact_ref: InteractRef, continue_uri: str, access_token: str
+    def continue_grant(
+        self,
+        url: UrlInput,
+        access_token: str,
+        interact_ref: InteractRef | None = None,
     ) -> GrantContinueResponse:
-        """
-        Continue Grant Request
+        """Continue at the returned URL; omit the body for explicit polling.
+
+        The caller owns callback verification, scheduling and use of the latest
+        continuation URI/token. No polling loop, wait or retry is performed.
         """
         return _execute_request(
             self.http_client,
             "POST",
-            continue_uri,
+            validate_request_url(url),
             GrantContinueResponse,
-            body=interact_ref,
+            body=interact_ref if interact_ref is not None else _NOT_GIVEN,
             body_model=InteractRef,
             access_token=access_token,
             signer=self,
+        )
+
+    @_sdk_operation("grants.continue")
+    def post_grant_continuation_request(
+        self, interact_ref: InteractRef, continue_uri: str, access_token: str
+    ) -> GrantContinueResponse:
+        """Compatibility adapter preserving the required JSON model argument."""
+        if not isinstance(interact_ref, InteractRef):
+            raise InputError(reason="body")
+        return self.continue_grant(continue_uri, access_token, interact_ref)
+
+    @_sdk_operation("grants.cancel")
+    def cancel(self, url: UrlInput, access_token: str) -> None:
+        """Cancel at the complete returned continuation URI, without a body."""
+        _execute_request(
+            self.http_client,
+            "DELETE",
+            validate_request_url(url),
+            None,
+            access_token=access_token,
+            signer=self,
+            expected_status=204,
         )
 
     @_sdk_operation("grants.cancel")
@@ -77,15 +110,7 @@ class Grants(SecurityBase):
         """
         base_url = auth_server_endpoint.rstrip("/")
         url = f"{base_url}/continue/{req_id}"
-        _execute_request(
-            self.http_client,
-            "DELETE",
-            url,
-            None,
-            access_token=access_token,
-            signer=self,
-            expected_status=204,
-        )
+        self.cancel(url, access_token)
 
 
 class AccessTokens(SecurityBase):
