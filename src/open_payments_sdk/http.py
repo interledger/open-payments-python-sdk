@@ -442,7 +442,7 @@ class HttpClient(HttpClientProtocol):
                     self._client = Client(
                         timeout=_timeout(self.http_timeout), follow_redirects=False
                     )
-                except (httpx.InvalidURL, ValueError, TypeError):
+                except (httpx.InvalidURL, ValueError, TypeError, OSError, ImportError):
                     raise ConfigurationError(reason="http_client") from None
             return self._client
 

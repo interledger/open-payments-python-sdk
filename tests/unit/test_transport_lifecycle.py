@@ -1,12 +1,16 @@
 """Reusable HTTP transport ownership and prepared-request isolation."""
 
+import builtins
 import logging
+import ssl
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Lock
 
 import httpx
 import pytest
 
+from open_payments_sdk import UnauthenticatedClient
 from open_payments_sdk.errors import (
     ConfigurationError,
     HTTPError,
@@ -19,6 +23,78 @@ from open_payments_sdk.gnap_utils.security import SecurityBase
 from open_payments_sdk.http import HttpClient
 
 URL = "https://resource.example/prefix/quotes"
+
+
+@pytest.fixture
+def clean_httpx_environment(monkeypatch):
+    for name in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize("certificate", ["missing", "malformed"])
+def test_lazy_tls_configuration_failure_is_structured_and_hides_paths(
+    clean_httpx_environment, monkeypatch, tmp_path, certificate
+):
+    sentinel = "DO-NOT-PRINT-certificate"
+    path = tmp_path / f"{sentinel}.pem"
+    if certificate == "malformed":
+        path.write_text("invalid certificate content", encoding="ascii")
+    monkeypatch.setenv("SSL_CERT_FILE", str(path))
+    with UnauthenticatedClient() as client:
+        assert client.http_client._client is None
+        with pytest.raises(ConfigurationError) as caught:
+            client.wallet.get("https://wallet.invalid/alice")
+        assert client.http_client._client is None
+    error = caught.value
+    assert error.operation == "wallet.get" and error.reason == "http_client"
+    assert isinstance(
+        error.__context__,
+        FileNotFoundError if certificate == "missing" else ssl.SSLError,
+    )
+    assert error.__suppress_context__
+    assert sentinel not in str(error) + repr(error) + repr(error.args)
+    assert sentinel not in "".join(traceback.format_exception(error))
+    assert client.is_closed
+
+
+def test_missing_optional_proxy_dependency_is_a_safe_lazy_configuration_error(
+    clean_httpx_environment, monkeypatch
+):
+    sentinel = "DO-NOT-PRINT-proxy"
+    monkeypatch.setenv("ALL_PROXY", f"socks5://user:{sentinel}@proxy.invalid:1080")
+    original = builtins.__import__
+    imports = []
+
+    def without_socks(name, *args, **kwargs):
+        if name == "socksio":
+            imports.append(name)
+            raise ImportError(sentinel)
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_socks)
+    with UnauthenticatedClient() as client:
+        assert client.http_client._client is None
+        with pytest.raises(ConfigurationError) as caught:
+            client.wallet.get("https://wallet.invalid/alice")
+        assert client.http_client._client is None
+    error = caught.value
+    assert imports == ["socksio"]
+    assert error.operation == "wallet.get" and error.reason == "http_client"
+    assert isinstance(error.__context__, ImportError) and error.__suppress_context__
+    assert sentinel not in str(error) + repr(error) + repr(error.args)
+    assert sentinel not in "".join(traceback.format_exception(error))
+    assert client.is_closed
 
 
 class RecordingTransport(httpx.BaseTransport):
