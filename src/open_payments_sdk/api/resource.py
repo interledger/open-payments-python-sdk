@@ -5,7 +5,7 @@ Resource Server Module
 from logging import Logger, LoggerAdapter
 from open_payments_sdk.errors import _sdk_operation
 from open_payments_sdk.gnap_utils.security import SecurityBase
-from open_payments_sdk.http import HttpClient, HttpClientProtocol, _request_result
+from open_payments_sdk.http import HttpClient, HttpClientProtocol, _execute_request
 from open_payments_sdk.models.resource import (
     IncomingPayment,
     IncomingPaymentRequest,
@@ -17,10 +17,6 @@ from open_payments_sdk.models.resource import (
     PaymentListQuery,
     Quote,
     QuoteRequest,
-)
-from open_payments_sdk.utils.utils import (
-    get_default_covered_components,
-    get_default_headers,
 )
 
 
@@ -51,27 +47,16 @@ class IncomingPayments(SecurityBase):
         """
         base_url = resource_server_endpoint.rstrip("/")
         url = f"{base_url}/incoming-payments"
-        data = payment.model_dump(exclude_unset=True, mode="json")
-        req_headers = {
-            **get_default_headers(),
-            **self.get_auth_header(access_token=access_token),
-        }
-        request = self.http_client.build_request(
-            method="POST", url=url, json=data, headers=req_headers
-        )
-        request = self.set_content_digest(request=request)
-        request = self.sign_request(
-            request,
-            (
-                "content-type",
-                "content-digest",
-                "content-length",
-                "authorization",
-                *get_default_covered_components(),
-            ),
-        )
-        return _request_result(
-            self.http_client, request, IncomingPayment, expected_status=201
+        return _execute_request(
+            self.http_client,
+            "POST",
+            url,
+            IncomingPayment,
+            body=payment,
+            body_model=IncomingPaymentRequest,
+            access_token=access_token,
+            signer=self,
+            expected_status=201,
         )
 
     @_sdk_operation("incoming_payments.list")
@@ -83,15 +68,16 @@ class IncomingPayments(SecurityBase):
         """
         base_url = resource_server_endpoint.rstrip("/")
         url = f"{base_url}/incoming-payments"
-        query_params = query.model_dump(exclude_unset=True, mode="json")
-        req_headers = {**self.get_auth_header(access_token=access_token)}
-        request = self.http_client.build_request(
-            method="GET", url=url, headers=req_headers, params=query_params
+        return _execute_request(
+            self.http_client,
+            "GET",
+            url,
+            PaginatedIncomingPayments,
+            query=query,
+            query_model=PaymentListQuery,
+            access_token=access_token,
+            signer=self,
         )
-        request = self.sign_request(
-            request, ("authorization", *get_default_covered_components())
-        )
-        return _request_result(self.http_client, request, PaginatedIncomingPayments)
 
     @_sdk_operation("incoming_payments.get")
     def get_incoming_payment(
@@ -102,14 +88,14 @@ class IncomingPayments(SecurityBase):
         """
         base_url = resource_server_endpoint.rstrip("/")
         url = f"{base_url}/incoming-payments/{payment_id}"
-        req_headers = {**self.get_auth_header(access_token=access_token)}
-        request = self.http_client.build_request(
-            method="GET", url=url, headers=req_headers
+        return _execute_request(
+            self.http_client,
+            "GET",
+            url,
+            IncomingPaymentResponse,
+            access_token=access_token,
+            signer=self,
         )
-        request = self.sign_request(
-            request, ("authorization", *get_default_covered_components())
-        )
-        return _request_result(self.http_client, request, IncomingPaymentResponse)
 
     @_sdk_operation("incoming_payments.complete")
     def post_complete_incoming_payment(
@@ -120,14 +106,14 @@ class IncomingPayments(SecurityBase):
         """
         base_url = resource_server_endpoint.rstrip("/")
         url = f"{base_url}/incoming-payments/{payment_id}/complete"
-        req_headers = {**self.get_auth_header(access_token=access_token)}
-        request = self.http_client.build_request(
-            method="POST", url=url, headers=req_headers
+        return _execute_request(
+            self.http_client,
+            "POST",
+            url,
+            IncomingPayment,
+            access_token=access_token,
+            signer=self,
         )
-        request = self.sign_request(
-            request, ("authorization", *get_default_covered_components())
-        )
-        return _request_result(self.http_client, request, IncomingPayment)
 
 
 class OutgoingPayments(SecurityBase):
@@ -157,29 +143,15 @@ class OutgoingPayments(SecurityBase):
         """
         base_url = resource_server_endpoint.rstrip("/")
         url = f"{base_url}/outgoing-payments"
-        data = payment.model_dump(exclude_unset=True, mode="json")
-        req_headers = {
-            **get_default_headers(),
-            **self.get_auth_header(access_token=access_token),
-        }
-        request = self.http_client.build_request(
-            method="POST", url=url, json=data, headers=req_headers
-        )
-        request = self.set_content_digest(request=request)
-        request = self.sign_request(
-            request,
-            (
-                "content-type",
-                "content-digest",
-                "content-length",
-                "authorization",
-                *get_default_covered_components(),
-            ),
-        )
-        return _request_result(
+        return _execute_request(
             self.http_client,
-            request,
+            "POST",
+            url,
             OutgoingPaymentWithSpentAmounts,
+            body=payment,
+            body_model=OutgoingPaymentRequest,
+            access_token=access_token,
+            signer=self,
             expected_status=201,
         )
 
@@ -192,15 +164,16 @@ class OutgoingPayments(SecurityBase):
         """
         base_url = resource_server_endpoint.rstrip("/")
         url = f"{base_url}/outgoing-payments"
-        query_params = query.model_dump(exclude_unset=True, mode="json")
-        req_headers = {**self.get_auth_header(access_token=access_token)}
-        request = self.http_client.build_request(
-            method="GET", url=url, headers=req_headers, params=query_params
+        return _execute_request(
+            self.http_client,
+            "GET",
+            url,
+            PaginatedOutgoingPayments,
+            query=query,
+            query_model=PaymentListQuery,
+            access_token=access_token,
+            signer=self,
         )
-        request = self.sign_request(
-            request, ("authorization", *get_default_covered_components())
-        )
-        return _request_result(self.http_client, request, PaginatedOutgoingPayments)
 
     @_sdk_operation("outgoing_payments.get")
     def get_outgoing_payment(
@@ -211,15 +184,13 @@ class OutgoingPayments(SecurityBase):
         """
         base_url = resource_server_endpoint
         url = f"{base_url}/outgoing-payments/{payment_id}"
-        req_headers = {**self.get_auth_header(access_token=access_token)}
-        request = self.http_client.build_request(
-            method="GET", url=url, headers=req_headers
-        )
-        request = self.sign_request(
-            request, ("authorization", *get_default_covered_components())
-        )
-        return _request_result(
-            self.http_client, request, OutgoingPaymentWithSpentAmounts
+        return _execute_request(
+            self.http_client,
+            "GET",
+            url,
+            OutgoingPaymentWithSpentAmounts,
+            access_token=access_token,
+            signer=self,
         )
 
 
@@ -247,26 +218,17 @@ class Quotes(SecurityBase):
         """
         base_url = resource_server_endpoint.rstrip("/")
         url = f"{base_url}/quotes"
-        data = quote.model_dump(exclude_unset=True, mode="json")
-        req_headers = {
-            **get_default_headers(),
-            **self.get_auth_header(access_token=access_token),
-        }
-        request = self.http_client.build_request(
-            method="POST", url=url, headers=req_headers, json=data
+        return _execute_request(
+            self.http_client,
+            "POST",
+            url,
+            Quote,
+            body=quote,
+            body_model=QuoteRequest,
+            access_token=access_token,
+            signer=self,
+            expected_status=201,
         )
-        request = self.set_content_digest(request=request)
-        request = self.sign_request(
-            request,
-            (
-                "content-type",
-                "content-digest",
-                "content-length",
-                "authorization",
-                *get_default_covered_components(),
-            ),
-        )
-        return _request_result(self.http_client, request, Quote, expected_status=201)
 
     @_sdk_operation("quotes.get")
     def get_quote(
@@ -277,11 +239,11 @@ class Quotes(SecurityBase):
         """
         base_url = resource_server_endpoint.rstrip("/")
         url = f"{base_url}/quotes/{quote_id}"
-        req_headers = {**self.get_auth_header(access_token=access_token)}
-        request = self.http_client.build_request(
-            method="GET", url=url, headers=req_headers
+        return _execute_request(
+            self.http_client,
+            "GET",
+            url,
+            Quote,
+            access_token=access_token,
+            signer=self,
         )
-        request = self.sign_request(
-            request, ("authorization", *get_default_covered_components())
-        )
-        return _request_result(self.http_client, request, Quote)

@@ -6,16 +6,12 @@ from logging import Logger, LoggerAdapter
 
 from open_payments_sdk.errors import _sdk_operation
 from open_payments_sdk.gnap_utils.security import SecurityBase
-from open_payments_sdk.http import HttpClient, HttpClientProtocol, _request_result
+from open_payments_sdk.http import HttpClient, HttpClientProtocol, _execute_request
 from open_payments_sdk.models.auth import AccessToken, Grant
 from open_payments_sdk.models.auth import (
     GrantContinueResponse,
     GrantRequest,
     InteractRef,
-)
-from open_payments_sdk.utils.utils import (
-    get_default_covered_components,
-    get_default_headers,
 )
 
 
@@ -44,23 +40,15 @@ class Grants(SecurityBase):
         """
         Grant Request
         """
-        data = grant_request.model_dump(exclude_unset=True, mode="json")
-
-        req_headers = {**get_default_headers()}
-        request = self.http_client.build_request(
-            method="POST", url=auth_server_endpoint, json=data, headers=req_headers
+        return _execute_request(
+            self.http_client,
+            "POST",
+            auth_server_endpoint,
+            Grant,
+            body=grant_request,
+            body_model=GrantRequest,
+            signer=self,
         )
-        request = self.set_content_digest(request=request)
-        request = self.sign_request(
-            request,
-            (
-                "content-type",
-                "content-digest",
-                "content-length",
-                *get_default_covered_components(),
-            ),
-        )
-        return _request_result(self.http_client, request, Grant)
 
     @_sdk_operation("grants.continue")
     def post_grant_continuation_request(
@@ -69,26 +57,16 @@ class Grants(SecurityBase):
         """
         Continue Grant Request
         """
-        data = interact_ref.model_dump(exclude_unset=True, mode="json")
-        req_headers = {
-            **get_default_headers(),
-            **self.get_auth_header(access_token=access_token),
-        }
-        request = self.http_client.build_request(
-            method="POST", url=continue_uri, json=data, headers=req_headers
+        return _execute_request(
+            self.http_client,
+            "POST",
+            continue_uri,
+            GrantContinueResponse,
+            body=interact_ref,
+            body_model=InteractRef,
+            access_token=access_token,
+            signer=self,
         )
-        request = self.set_content_digest(request=request)
-        request = self.sign_request(
-            request,
-            (
-                "content-type",
-                "content-digest",
-                "content-length",
-                "authorization",
-                *get_default_covered_components(),
-            ),
-        )
-        return _request_result(self.http_client, request, GrantContinueResponse)
 
     @_sdk_operation("grants.cancel")
     def delete_grant(
@@ -99,14 +77,15 @@ class Grants(SecurityBase):
         """
         base_url = auth_server_endpoint.rstrip("/")
         url = f"{base_url}/continue/{req_id}"
-        req_headers = {**self.get_auth_header(access_token=access_token)}
-        request = self.http_client.build_request(
-            method="DELETE", url=url, headers=req_headers
+        _execute_request(
+            self.http_client,
+            "DELETE",
+            url,
+            None,
+            access_token=access_token,
+            signer=self,
+            expected_status=204,
         )
-        request = self.sign_request(
-            request, ("authorization", *get_default_covered_components())
-        )
-        _request_result(self.http_client, request, None, expected_status=204)
 
 
 class AccessTokens(SecurityBase):
@@ -133,14 +112,14 @@ class AccessTokens(SecurityBase):
         """
         base_url = auth_server_endpoint.rstrip("/")
         url = f"{base_url}/token/{token_id}"
-        req_headers = {**self.get_auth_header(access_token=access_token)}
-        request = self.http_client.build_request(
-            method="POST", url=url, headers=req_headers
+        return _execute_request(
+            self.http_client,
+            "POST",
+            url,
+            AccessToken,
+            access_token=access_token,
+            signer=self,
         )
-        request = self.sign_request(
-            request, ("authorization", *get_default_covered_components())
-        )
-        return _request_result(self.http_client, request, AccessToken)
 
     @_sdk_operation("tokens.revoke")
     def delete_access_token(
@@ -151,12 +130,12 @@ class AccessTokens(SecurityBase):
         """
         base_url = auth_server_endpoint.rstrip("/")
         url = f"{base_url}/token/{token_id}"
-        req_headers = {**self.get_auth_header(access_token=access_token)}
-
-        request = self.http_client.build_request(
-            method="DELETE", url=url, headers=req_headers
+        _execute_request(
+            self.http_client,
+            "DELETE",
+            url,
+            None,
+            access_token=access_token,
+            signer=self,
+            expected_status=204,
         )
-        request = self.sign_request(
-            request, ("authorization", *get_default_covered_components())
-        )
-        _request_result(self.http_client, request, None, expected_status=204)

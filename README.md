@@ -229,6 +229,10 @@ For an existing native HTTPX client, use `HttpClient(http_timeout=10.0, client=n
 
 SDK requests use their prepared URL, body and headers without merging native-client default headers, query parameters, cookies or authentication. Dispatch explicitly disables redirects and uses no additional authentication flow, preserving per-call GNAP credentials and signatures even when the borrowed client has different defaults. The SDK adds no retries. Injected event hooks and custom transports remain caller-configured behavior and must preserve signed request bytes and avoid replaying payments.
 
+All synchronous wallet, grant, token and payment methods share one request pipeline. Each supplied body/query model is exported once with its existing aliases and omission rules, then HTTPX prepares the final URL and JSON bytes. The SDK calculates the content digest and signs that prepared request before sending it to the shared response handler. Tokens remain call-local and covered request data is preserved during dispatch.
+
+Required body/query arguments must match the operation's SDK request model. Invalid body/query values, including `None`, raw dictionaries and unrelated models, raise `InputError` before their fields are serialized. Required access tokens must be strings; invalid values raise `InputError` before dispatch. An empty polling model such as `InteractRef()` sends a signed `{}` JSON body; bodyless operations send no JSON payload.
+
 ## SDK operation errors
 
 Synchronous wallet, grant, token and payment operations raise subclasses of `OpenPaymentsError` from `open_payments_sdk.errors`: `ConfigurationError`, `InputError`, `SigningError`, `TransportError`, `TransportTimeoutError`, `HTTPError` or `ResponseError`. Direct Pydantic model construction and standalone cryptography helpers retain their existing exceptions. A timeout is also a transport error; it does not establish whether the server completed a payment. The SDK does not retry failed calls.

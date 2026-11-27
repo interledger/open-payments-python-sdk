@@ -2,7 +2,7 @@
 
 from math import isfinite
 from threading import Lock
-from typing import Callable, Protocol, TypeVar, overload
+from typing import Any, Callable, Protocol, Sequence, TypeVar, overload
 
 import httpx
 from httpx import Client, Request, Response
@@ -17,6 +17,10 @@ from open_payments_sdk.errors import (
     TransportTimeoutError,
     _schema_fields,
     _validation_issues,
+)
+from open_payments_sdk.utils.utils import (
+    get_default_covered_components,
+    get_default_headers,
 )
 
 T = TypeVar("T", bound=BaseModel)
@@ -119,6 +123,139 @@ def _request_result(
         ) from None
 
 
+class _NotGiven:
+    """Distinguish missing call options from invalid explicit null inputs."""
+
+
+_NOT_GIVEN = _NotGiven()
+
+
+class _RequestSigner(Protocol):
+    def get_auth_header(self, access_token: str) -> dict: ...
+
+    def set_content_digest(self, request: Request) -> Request: ...
+
+    def sign_request(
+        self, message: Request, covered_component_ids: Sequence[str]
+    ) -> Request: ...
+
+
+def _model_payload(
+    value: BaseModel | _NotGiven, kind: str, expected: type[BaseModel]
+) -> dict[str, Any]:
+    if not isinstance(value, expected):
+        raise InputError(reason=kind)
+    return value.model_dump(exclude_unset=True, mode="json")
+
+
+def _prepare_request(
+    client: "_RequestBuilder",
+    method: str,
+    url: str,
+    *,
+    body: BaseModel | _NotGiven = _NOT_GIVEN,
+    body_model: type[BaseModel] = BaseModel,
+    query: BaseModel | _NotGiven = _NOT_GIVEN,
+    query_model: type[BaseModel] = BaseModel,
+    access_token: str | _NotGiven = _NOT_GIVEN,
+    signer: _RequestSigner | None = None,
+) -> Request:
+    """Serialize once and protect the final request independently of I/O."""
+    options: dict[str, Any] = {}
+    headers: dict[str, str] = {}
+    components: tuple[str, ...] = ()
+    if body is not _NOT_GIVEN:
+        options["json"] = _model_payload(body, "body", body_model)
+        headers.update(get_default_headers())
+        components = ("content-type", "content-digest", "content-length")
+    if query is not _NOT_GIVEN:
+        options["params"] = _model_payload(query, "query", query_model)
+    if access_token is not _NOT_GIVEN:
+        if not isinstance(access_token, str):
+            raise InputError(reason="access_token")
+        if signer is None:
+            raise ConfigurationError(reason="signer")
+        headers.update(signer.get_auth_header(access_token=access_token))
+        components += ("authorization",)
+    if body is not _NOT_GIVEN and signer is None:
+        raise ConfigurationError(reason="signer")
+    if headers:
+        options["headers"] = headers
+    request = client.build_request(method=method, url=url, **options)
+    if signer is not None:
+        if body is not _NOT_GIVEN:
+            request = signer.set_content_digest(request=request)
+        request = signer.sign_request(
+            request, (*components, *get_default_covered_components())
+        )
+    return request
+
+
+@overload
+def _execute_request(
+    client: "HttpClientProtocol",
+    method: str,
+    url: str,
+    response_model: type[T],
+    *,
+    body: BaseModel | _NotGiven = _NOT_GIVEN,
+    body_model: type[BaseModel] = BaseModel,
+    query: BaseModel | _NotGiven = _NOT_GIVEN,
+    query_model: type[BaseModel] = BaseModel,
+    access_token: str | _NotGiven = _NOT_GIVEN,
+    signer: _RequestSigner | None = None,
+    expected_status: int = 200,
+) -> T: ...
+
+
+@overload
+def _execute_request(
+    client: "HttpClientProtocol",
+    method: str,
+    url: str,
+    response_model: None,
+    *,
+    body: BaseModel | _NotGiven = _NOT_GIVEN,
+    body_model: type[BaseModel] = BaseModel,
+    query: BaseModel | _NotGiven = _NOT_GIVEN,
+    query_model: type[BaseModel] = BaseModel,
+    access_token: str | _NotGiven = _NOT_GIVEN,
+    signer: _RequestSigner | None = None,
+    expected_status: int = 200,
+) -> None: ...
+
+
+def _execute_request(
+    client: "HttpClientProtocol",
+    method: str,
+    url: str,
+    response_model: type[T] | None,
+    *,
+    body: BaseModel | _NotGiven = _NOT_GIVEN,
+    body_model: type[BaseModel] = BaseModel,
+    query: BaseModel | _NotGiven = _NOT_GIVEN,
+    query_model: type[BaseModel] = BaseModel,
+    access_token: str | _NotGiven = _NOT_GIVEN,
+    signer: _RequestSigner | None = None,
+    expected_status: int = 200,
+) -> T | None:
+    """Dispatch one prepared request through the shared response boundary."""
+    request = _prepare_request(
+        client,
+        method,
+        url,
+        body=body,
+        body_model=body_model,
+        query=query,
+        query_model=query_model,
+        access_token=access_token,
+        signer=signer,
+    )
+    return _request_result(
+        client, request, response_model, expected_status=expected_status
+    )
+
+
 def _timeout(value: float | httpx.Timeout | None) -> httpx.Timeout:
     if value is not None and (
         isinstance(value, bool) or not isinstance(value, (int, float, httpx.Timeout))
@@ -142,9 +279,7 @@ def _timeout(value: float | httpx.Timeout | None) -> httpx.Timeout:
     return timeout
 
 
-class HttpClientProtocol(Protocol):
-    """Minimal interface accepted for a caller-owned SDK request transport."""
-
+class _RequestBuilder(Protocol):
     def build_request(
         self,
         method: str,
@@ -154,6 +289,10 @@ class HttpClientProtocol(Protocol):
         json: dict | None = None,
         params: dict | None = None,
     ) -> Request: ...
+
+
+class HttpClientProtocol(_RequestBuilder, Protocol):
+    """Minimal interface accepted for a caller-owned SDK request transport."""
 
     def send(self, request: Request) -> Response: ...
 
