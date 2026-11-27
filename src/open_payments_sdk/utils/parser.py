@@ -1,7 +1,7 @@
 from base64 import b64encode, b64decode
-from pydantic import AnyUrl
 
 from open_payments_sdk.gnap_utils.hash import HashEncoding, verify_interaction_hash
+from open_payments_sdk.utils.urls import UrlInput, normalize_wallet_address
 
 
 class PaymentsParser:
@@ -9,16 +9,9 @@ class PaymentsParser:
     Convenience class with functions to preprocess and parse Open Payments inputs and response data.
     """
 
-    def normalise_wallet_address(self, *, wallet_address: str) -> str:
-        """
-        Parse `$ilp.wallet.com/name` to `https://ilp.wallet.com/name`.
-        """
-        if isinstance(wallet_address, AnyUrl):
-            return str(wallet_address)
-        wallet_address = wallet_address.strip("$").strip("/")
-        if wallet_address.startswith("https://"):
-            return wallet_address
-        return f"https://{wallet_address}"
+    def normalise_wallet_address(self, *, wallet_address: UrlInput) -> str:
+        """Normalize an address using the shared URL/payment-pointer rules."""
+        return normalize_wallet_address(wallet_address)
 
     def isBase64(self, *, term: str | bytes) -> bool:
         # https://stackoverflow.com/a/45928164
@@ -34,7 +27,9 @@ class PaymentsParser:
         except Exception:
             return False
 
-    def convert_private_key_to_PEM(self, *, private_key: str | bytes, format: str = "PRIVATE KEY") -> str:
+    def convert_private_key_to_PEM(
+        self, *, private_key: str | bytes, format: str = "PRIVATE KEY"
+    ) -> str:
         """
         Private keys must be encapsulated as a PEM block, cf https://cryptography.io/en/latest/hazmat/primitives/asymmetric/serialization/#pem
         PEM keys are recognizable because they all begin with `-----BEGIN {format}-----` and end with `-----END {format}-----`

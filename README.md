@@ -177,6 +177,29 @@ Public-model `kid` follows the specification's string contract. Key generation, 
 
 Grant identities, display and finish URIs, listing wallet URIs and payment resource URIs validate complete RFC3986 syntax, including authority, path, query and fragment boundaries. String fields in identities and display metadata retain valid input spelling; native `AnyUrl` values are checked after conversion to their existing normalized spelling. Invalid escapes, unescaped brackets outside IP literals, repeated fragment delimiters and malformed authority fields are rejected. IPv6 literals and properly percent-encoded components remain supported.
 
+## Wallet URLs and payment pointers
+
+The helpers in `open_payments_sdk.utils.urls` validate and convert addresses without making requests:
+
+```python
+from open_payments_sdk.utils.urls import (
+    normalize_wallet_address,
+    resolve_payment_pointer,
+    validate_request_url,
+)
+
+assert resolve_payment_pointer("$wallet.example") == "https://wallet.example/.well-known/pay"
+assert normalize_wallet_address("$wallet.example/alice/") == "https://wallet.example/alice/"
+assert normalize_wallet_address("wallet.example/alice") == "https://wallet.example/alice"
+assert validate_request_url("http://localhost:3000/alice") == "http://localhost:3000/alice"
+```
+
+[Payment-pointer syntax](https://paymentpointers.org/syntax/) requires a leading `$`, a host and an optional path. Conversion always uses HTTPS; an empty path or `/` becomes `/.well-known/pay`. Ports (including `:443` and an empty `:`), credentials, queries and fragments are invalid in pointers. Other paths keep their escaping and trailing slash.
+
+`validate_request_url` requires an absolute HTTP(S) URL with a host, without userinfo or a fragment. Explicit HTTP URLs and ports support development endpoints. Valid string input retains its scheme/host spelling, path escapes and query order, including an empty query marker; HTTPX may apply its own URL normalization when a request is later prepared. `AnyUrl` and `httpx.URL` inputs are checked using their existing normalized spelling. Invalid inputs raise `InputError` with sanitized diagnostics.
+
+`normalize_wallet_address` also accepts the legacy bare host/path form and adds `https://`. Use an explicit scheme for a URL with a port. Bare hosts receive no well-known path fallback. The legacy `paymentsparser.normalise_wallet_address(wallet_address=...)` delegates to the same rules, preserving explicit HTTP URLs and trailing slashes. Conversion does not verify wallet metadata or production wallet-address requirements. Protocol data fields retain their separate URI schema rules. `Wallet.get_wallet_address` and `Wallet.get_keys` currently expect explicit URLs; convert pointers before calling them.
+
 ## Client configuration and lifecycle
 
 `Configuration` accepts `http_timeout`, `user_agent`, extra `headers`, and a standard-library `logger` or `LoggerAdapter`. Existing `Configuration()` construction and setting its attributes before constructing a client continue to work. Defaults are a ten-second timeout, `User-Agent: open-payments-sdk/python`, and `Accept: application/json`.
