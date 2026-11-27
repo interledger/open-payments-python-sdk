@@ -4,22 +4,22 @@ The functions in this module support commonly-used payments processes. For anyth
 
 ## Standard payment processes
 
-1. **One-off**: a payment - usually of purchase and sale - between a buyer and seller which happens once.
-2. **Recurring**: a payment - usually a subscription, or structured fee - between a buyer and seller.
-3. **Conditional**: a payment which is conditional on some additional factor - e.g. the seller is required to perform some task, or a threshold of purchases are required - before funds are transfered.
+1. **One-off**: a single payment from a sender to a recipient.
+2. **Recurring**: repeated payments from a sender to a recipient.
+3. **Conditional**: a payment whose initiation depends on an application-defined condition.
 
 There are additional characteristics as well, such as **split payments** between multiple recipients, which may be required.
 
 Each of these has a common set of steps which are performed on behalf of the corresponding payments actors (cf. https://openpayments.dev/concepts/op-flow/):
 
-1. Get purchaser / buyer's wallet address information
+1. Get the sender's and recipient's wallet address information
 2. Request an _Incoming Payment Grant_
 3. Create an _Incoming Payment_
 4. Request a _Quote Grant_
 5. Create a _Quote_
 6. Request an interactive _Outgoing Payment Grant_
-7. Start interaction with the purchaser
-8. Finish interaction with the purchaser
+7. Start interaction with the sender
+8. Finish interaction with the sender
 9. Request a _Grant Continuation_
 10. Create an _Outgoing Payment_
 
@@ -30,9 +30,9 @@ Each of these has a common set of steps which are performed on behalf of the cor
 There are several "externalities" necessary to use these functions:
 
 1. You need to develop some mechanism for storing asynchronous / stateless information (e.g. text files or a database) received during the grant-making process.
-2. You need to have the recipient / seller's information in advance, including their private key to permit independent grant requests on their behalf (`wallet_address`, `private_key`, `key_id`).
-3. You must store the initial outgoing payment grant response to recover the purchase request. The merchant response will return a reference ID you provided, and which you can use to recover the specified transaction.
-4. You need a web-based client which can receive the purchaser's merchant / wallet response and dispatch that response for further processing. The purchaser's merchant response will be directed to a specified URL endpoint.
+2. This helper signs requests using the configured recipient account, so its wallet address, private key and registered key ID must be available.
+3. Store payment state and the initial outgoing payment grant response before redirecting the sender. Correlate the returned callback with that stored transaction.
+4. Provide a callback endpoint that receives the sender's interaction result and dispatches it for verification and grant continuation.
 
 Before continuing a grant or creating an outgoing payment, validate the callback against its stored interaction context:
 
@@ -43,17 +43,19 @@ Only then should you consider the transaction successfully completed.
 
 ### Stored consent and completion attempts
 
-`get_purchase_endpoint` generates a fresh unpredictable `client_nonce` and records the exact `grant_endpoint` used for initiation. These values, the server's `finish_id`, continuation credentials and payment/quote references are part of `pending_payment`. Persist that model before handing the redirect to the buyer. Its serialized data contains credentials and must be kept in your protected transaction store.
+`initiate_payment(amount=...)` creates the incoming payment and quote, requests an outgoing payment grant, and returns its interaction redirect URI. It generates a fresh unpredictable `client_nonce` and records the exact `grant_endpoint` used for initiation. These values, the server's `finish_id`, continuation credentials and payment/quote references are part of `pending_payment`. Persist that model before handing the redirect to the sender. Its serialized data contains credentials and must be kept in your protected transaction store.
 
-The claimed initiation records `incoming_amount` from the validated request using the seller's assets. As each stage succeeds, it snapshots the full `incoming_payment`, `quote` and `outgoing_grant` responses, retaining their resource IDs and setting `quoted_amount` to the buyer's quoted debit amount. Sending and receiving assets remain independent. Quote expiry strings and grant continuation waits are preserved for application decisions. Persist partial state when initiation raises; a missing response does not establish that the provider created no resource, and the same transaction cannot be restarted implicitly.
+The existing `get_purchase_endpoint(amount=...)` name remains a compatibility alias for `initiate_payment`. Both names use the same state and initiation guard. The existing `buyer` and `seller` actor names refer to the sender and recipient respectively; existing constructor arguments and saved-state fields remain supported.
+
+The claimed initiation records `incoming_amount` from the validated request using the recipient's assets. As each stage succeeds, it snapshots the full `incoming_payment`, `quote` and `outgoing_grant` responses, retaining their resource IDs and setting `quoted_amount` to the sender's quoted debit amount. Sending and receiving assets remain independent. Quote expiry strings and grant continuation waits are preserved for application decisions. Persist partial state when initiation raises; a missing response does not establish that the provider created no resource, and the same transaction cannot be restarted implicitly.
 
 This redirect helper requires interaction instructions from the outgoing grant. If the server issues an access token without requiring interaction, the helper raises `ValueError` and retains that approved response and its continuation credentials in `outgoing_grant`, `continue_url` and `continue_id`. The application can use the stored quote and token with the standard API for explicit outgoing creation. The processor does not force another consent request or create a payment automatically while preparing a redirect.
 
-`complete_payment` verifies the callback against that stored context and checks that its buyer and seller match the processor. Missing, malformed or mismatched callbacks and incomplete records are rejected before continuation or outgoing creation. Old records without the original nonce and endpoint cannot be resumed by guessing them from the transaction ID or current wallet metadata.
+`complete_payment` verifies the callback against that stored context and checks that its sender and recipient match the processor. Missing, malformed or mismatched callbacks and incomplete records are rejected before continuation or outgoing creation. Old records without the original nonce and endpoint cannot be resumed by guessing them from the transaction ID or current wallet metadata.
 
 Each transaction allows one initiation and one completion attempt. The processor sets `completion_started` before sending the continuation and keeps it set on success or failure, including an uncertain HTTP outcome. Persist the mutated state even when completion raises; reconcile uncertain outcomes with the provider before considering another payment attempt.
 
-The incoming-payment and quote helpers validate their resource inputs before requesting a grant. Purchase initiation also validates its amount before generating a nonce or claiming the initiation attempt. Integer amounts are converted to decimal strings; booleans, negative or overflowing amounts and invalid quote receivers are rejected by the existing resource models.
+The incoming-payment and quote helpers validate their resource inputs before requesting a grant. Payment initiation also validates its amount before generating a nonce or claiming the initiation attempt. Integer amounts are converted to decimal strings; booleans, negative or overflowing amounts and invalid quote receivers are rejected by the existing resource models.
 
 Validated grant responses are retained as snapshots in `pending_payment.incoming_grant` and `pending_payment.quote_grant` before resource creation. Each helper requires an issued access token; a pending grant raises `ValueError` without attempting the incoming payment or quote. Its interaction instructions, continuation credentials and wait remain available in the saved grant for explicit application handling through the standard API. Approved grants retain their token management and expiry metadata even if resource creation fails. These snapshots are omitted from ordinary representations and included in explicit protected state dumps. The helpers do not fall back to a token from an earlier response.
 

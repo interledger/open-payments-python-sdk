@@ -241,15 +241,13 @@ def test_quote_receiver_native_types_keep_the_independent_buyer_and_seller_asset
 @pytest.mark.parametrize(
     "amount", [True, False, -1, 18446744073709551616, 1.5, b"1000", "1.5", "\u0661", ""]
 )
-@pytest.mark.parametrize("purchase", [False, True])
-def test_invalid_amounts_do_not_request_grants_or_claim_purchase_initiation(
-    context, amount, purchase
+@pytest.mark.parametrize("initiation", [False, True])
+def test_invalid_amounts_do_not_request_grants_or_claim_payment_initiation(
+    context, amount, initiation
 ):
     processor = context.processor
     method = (
-        processor.get_purchase_endpoint
-        if purchase
-        else processor.request_incoming_payment
+        processor.initiate_payment if initiation else processor.request_incoming_payment
     )
     with pytest.raises(ValidationError):
         method(amount=amount)
@@ -328,20 +326,20 @@ def test_invalid_subject_only_initial_responses_do_not_attempt_resources(
     assert len(context.http.requests) == 3
 
 
-def test_pending_initial_grant_remains_recoverable_without_restarting_purchase(context):
+def test_pending_initial_grant_remains_recoverable_without_restarting_payment(context):
     context.http.responses.append(httpx.Response(200, json=PENDING))
     with pytest.raises(ValueError, match="Incoming payment grant has not issued"):
-        context.processor.get_purchase_endpoint(amount="1000")
+        context.processor.initiate_payment(amount="1000")
     state = context.processor.pending_payment
     assert state.client_nonce and state.grant_endpoint == BUYER_AUTH
     assert state.incoming_grant.model_dump(mode="json") == PENDING
     assert state.quote_grant is None and state.incoming_payment_id is None
     with pytest.raises(ValueError, match="initiation already started"):
-        context.processor.get_purchase_endpoint(amount="1000")
+        context.processor.initiate_payment(amount="1000")
     assert len(context.http.requests) == 3
 
 
-def purchase_payloads():
+def payment_payloads():
     incoming = copy.deepcopy(INCOMING)
     incoming["incomingAmount"]["value"] = "0001000"
     incoming["metadata"] = {"invoice": "private-state-invoice"}
@@ -358,7 +356,7 @@ def purchase_payloads():
     return incoming, quote
 
 
-def purchase_responses(incoming, quote, outgoing=PENDING):
+def payment_responses(incoming, quote, outgoing=PENDING):
     quote_grant = copy.deepcopy(APPROVED)
     quote_grant["access_token"]["value"] = "quote-access-secret"
     return [
@@ -370,12 +368,13 @@ def purchase_responses(incoming, quote, outgoing=PENDING):
     ]
 
 
-def test_purchase_snapshots_intent_resources_and_interactive_grant_before_recovery(
-    context, monkeypatch, keyid_private_key
+@pytest.mark.parametrize("entrypoint", ["initiate_payment", "get_purchase_endpoint"])
+def test_payment_snapshots_intent_resources_and_interactive_grant_before_recovery(
+    context, monkeypatch, keyid_private_key, entrypoint
 ):
     processor, http = context.processor, context.http
-    incoming, quote = purchase_payloads()
-    http.responses.extend(purchase_responses(incoming, quote))
+    incoming, quote = payment_payloads()
+    http.responses.extend(payment_responses(incoming, quote))
     captured = {}
 
     def capture(name, method):
@@ -417,7 +416,7 @@ def test_purchase_snapshots_intent_resources_and_interactive_grant_before_recove
         return send(request)
 
     monkeypatch.setattr(http.client, "send", check_state)
-    redirect = processor.get_purchase_endpoint(amount="0001000")
+    redirect = getattr(processor, entrypoint)(amount="0001000")
     assert str(redirect) == PENDING["interact"]["redirect"]
     state = processor.pending_payment
     saved = state.model_dump_json(exclude_unset=True)
@@ -476,21 +475,29 @@ def test_purchase_snapshots_intent_resources_and_interactive_grant_before_recove
         )
         for request in http.requests[2:]
     )
+    other_entrypoint = (
+        "get_purchase_endpoint"
+        if entrypoint == "initiate_payment"
+        else "initiate_payment"
+    )
+    with pytest.raises(ValueError, match="initiation already started"):
+        getattr(processor, other_entrypoint)(amount="0001000")
+    assert len(http.requests) == 7
 
 
 @pytest.mark.parametrize("stage", ["incoming", "quote", "outgoing_grant"])
 @pytest.mark.parametrize("status", [200, 500])
-def test_partial_purchase_state_survives_later_unknown_or_invalid_outcomes(
+def test_partial_payment_state_survives_later_unknown_or_invalid_outcomes(
     context, stage, status
 ):
-    incoming, quote = purchase_payloads()
-    responses = purchase_responses(incoming, quote)
+    incoming, quote = payment_payloads()
+    responses = payment_responses(incoming, quote)
     index = {"incoming": 1, "quote": 3, "outgoing_grant": 4}[stage]
     context.http.responses.extend(
         responses[:index] + [httpx.Response(status, json={"error": "uncertain"})]
     )
     with pytest.raises(ResponseError if status == 200 else HTTPError):
-        context.processor.get_purchase_endpoint(amount="0001000")
+        context.processor.initiate_payment(amount="0001000")
     restored = PendingIncomingPaymentTransaction.model_validate_json(
         context.processor.pending_payment.model_dump_json()
     )
@@ -507,20 +514,20 @@ def test_partial_purchase_state_survives_later_unknown_or_invalid_outcomes(
         assert restored.quoted_amount.model_dump() == quote["debitAmount"]
     count = len(context.http.requests)
     with pytest.raises(ValueError, match="initiation already started"):
-        context.processor.get_purchase_endpoint(amount="0001000")
+        context.processor.initiate_payment(amount="0001000")
     assert len(context.http.requests) == count
 
 
 def test_already_approved_outgoing_grant_is_retained_without_implicit_creation(context):
-    incoming, quote = purchase_payloads()
+    incoming, quote = payment_payloads()
     approved = copy.deepcopy(APPROVED)
     approved["access_token"]["value"] = "outgoing-approved-secret"
-    context.http.responses.extend(purchase_responses(incoming, quote, approved))
+    context.http.responses.extend(payment_responses(incoming, quote, approved))
     with pytest.raises(
         ValueError,
         match="Outgoing payment grant did not return interaction instructions",
     ) as caught:
-        context.processor.get_purchase_endpoint(amount="0001000")
+        context.processor.initiate_payment(amount="0001000")
     state = PendingIncomingPaymentTransaction.model_validate_json(
         context.processor.pending_payment.model_dump_json()
     )
@@ -534,7 +541,7 @@ def test_already_approved_outgoing_grant_is_retained_without_implicit_creation(c
     assert not state.completion_started and len(context.http.requests) == 7
     assert "outgoing-approved-secret" not in repr(state) + str(caught.value)
     with pytest.raises(ValueError, match="initiation already started"):
-        context.processor.get_purchase_endpoint(amount="0001000")
+        context.processor.initiate_payment(amount="0001000")
     assert len(context.http.requests) == 7
 
 

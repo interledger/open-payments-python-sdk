@@ -23,7 +23,7 @@ _transaction_lock = Lock()
 
 class OpenPaymentsProcessor:
     """
-    Core functions for processing open payments on behalf of an instance actor merchant account.
+    Convenience processor for one-off Open Payments flows.
 
     Based on https://openpayments.dev/concepts/op-flow/
 
@@ -38,7 +38,7 @@ class OpenPaymentsProcessor:
     9. Request a grant continuation
     10. Create an Outgoing Payment
 
-    The key break is the interactive phase. It is necessary to save the buyer-
+    Persist payment state while the sender completes the interaction.
     """
 
     def __init__(
@@ -94,11 +94,11 @@ class OpenPaymentsProcessor:
         )
 
     ###################################################################################################
-    # 2. SELLER INCOMING PAYMENT PROCESS
+    # 2. RECIPIENT INCOMING PAYMENT PROCESS
     ###################################################################################################
 
     def _incoming_payment_request(self, amount: int | str) -> IncomingPaymentRequest:
-        """Validate the amount and seller assets before requesting authorization."""
+        """Validate the amount and recipient assets before requesting authorization."""
         if isinstance(amount, int) and not isinstance(amount, bool):
             amount = str(amount)
         return IncomingPaymentRequest(
@@ -111,7 +111,7 @@ class OpenPaymentsProcessor:
         )
 
     def request_incoming_payment(self, *, amount: int | str):
-        """TO THE SELLER"""
+        """Request an incoming payment for the recipient."""
         payment = self._incoming_payment_request(amount)
         grant = self.request_grant(
             grant="incoming-payment",
@@ -128,11 +128,11 @@ class OpenPaymentsProcessor:
         )
 
     ###################################################################################################
-    # 3. BUYER QUOTE REQUEST PROCESS
+    # 3. SENDER QUOTE REQUEST PROCESS
     ###################################################################################################
 
     def request_quote(self, *, incoming_payment_id: str | HttpUrl | AnyUrl) -> Quote:
-        """TO THE BUYER"""
+        """Request a quote from the sender's resource server."""
         quote = QuoteRequest(
             **{
                 "walletAddress": self.buyer_wallet.id,
@@ -155,13 +155,13 @@ class OpenPaymentsProcessor:
         )
 
     ###################################################################################################
-    # 4. REQUEST BUYER INTERACTIVE GRANT FOR PURCHASE
+    # 4. REQUEST SENDER INTERACTIVE OUTGOING PAYMENT GRANT
     ###################################################################################################
 
-    def get_purchase_endpoint(self, *, amount: int | str) -> str | AnyUrl:
+    def initiate_payment(self, *, amount: int | str) -> str | AnyUrl:
         """
-        Implements the first half of the purchase process, requesting 'incoming-payment' and 'quote' grants,
-        then requesting - and returning - an interactive payment grant for the buyer.
+        Create an incoming payment and quote, then request an outgoing payment
+        grant and return the sender's interaction redirect URI.
         """
         payment_request = self._incoming_payment_request(amount)
         amount = payment_request.incomingAmount.value
@@ -171,20 +171,20 @@ class OpenPaymentsProcessor:
                 or self.pending_payment.completion_started
             ):
                 raise ValueError(
-                    "Purchase initiation already started for this transaction"
+                    "Payment initiation already started for this transaction"
                 )
             self.pending_payment.client_nonce = secrets.token_urlsafe(32)
             self.pending_payment.grant_endpoint = str(self.buyer_wallet.authServer)
             self.pending_payment.incoming_amount = (
                 payment_request.incomingAmount.model_copy(deep=True)
             )
-        # 1. Request incoming payment grant for the seller
+        # 1. Request incoming payment grant for the recipient
         incoming_payment_response = self.request_incoming_payment(amount=amount)
         self.pending_payment.incoming_payment = incoming_payment_response.model_copy(
             deep=True
         )
         self.pending_payment.incoming_payment_id = incoming_payment_response.id
-        # 2. Request quote grant for the buyer
+        # 2. Request quote grant for the sender
         quote_response = self.request_quote(
             incoming_payment_id=incoming_payment_response.id
         )
@@ -193,7 +193,7 @@ class OpenPaymentsProcessor:
         self.pending_payment.quoted_amount = quote_response.debitAmount.model_copy(
             deep=True
         )
-        # 3. Request an interactive payment endpoint for the buyer
+        # 3. Request the sender's outgoing payment grant interaction
         # Request a grant
         grant_request = GrantRequest(
             **{
@@ -248,6 +248,10 @@ class OpenPaymentsProcessor:
         self.pending_payment.finish_id = interactive_response.interact.finish
         return interactive_response.interact.redirect
 
+    def get_purchase_endpoint(self, *, amount: int | str) -> str | AnyUrl:
+        """Compatibility alias retaining the original helper name and keyword."""
+        return self.initiate_payment(amount=amount)
+
     ###################################################################################################
     # 5. COMPLETE OUTGOING PAYMENT
     ###################################################################################################
@@ -259,9 +263,8 @@ class OpenPaymentsProcessor:
         pending_payment: PendingIncomingPaymentTransaction,
     ) -> OutgoingPayment:
         """
-        After purchaser approves interactive payment, webhook will receive confirmation permitting continuation.
-
-        Use `key` to retrieve the original interactive grant request, and `interact_ref` to complete payment.
+        Verify the sender's interaction callback against stored payment state,
+        continue the grant and create the outgoing payment.
         """
         if not isinstance(pending_payment, PendingIncomingPaymentTransaction):
             raise ValueError("A stored pending payment transaction is required")
@@ -345,7 +348,7 @@ class OpenPaymentsProcessor:
                 "Grant continuation has not issued an outgoing payment access token"
             )
         access_token = grant_request.access_token.value
-        # Create an outgoing payment from the `buyer`
+        # Create the outgoing payment from the sender's wallet
         payment = self.client.outgoing_payments.post_create_payment(
             payment=outgoing_payment_request,
             resource_server_endpoint=str(pending_payment.buyer.resourceServer),

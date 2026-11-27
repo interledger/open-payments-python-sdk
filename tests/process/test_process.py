@@ -8,16 +8,16 @@ from open_payments_sdk.process.crud import OpenPaymentsProcessor
 pytestmark = [pytest.mark.live, pytest.mark.browser]
 
 
-def interactive_purchase_approval(
-    purchase_endpoint, browser_driver, settings, accept=True
+def interactive_payment_approval(
+    payment_redirect, browser_driver, settings, accept=True
 ) -> str | None:
     from selenium.webdriver.common.by import By
 
     response_url = None
-    if not isinstance(purchase_endpoint, str):
-        purchase_endpoint = str(purchase_endpoint)
+    if not isinstance(payment_redirect, str):
+        payment_redirect = str(payment_redirect)
     driver = browser_driver
-    driver.get(purchase_endpoint)
+    driver.get(payment_redirect)
     driver.implicitly_wait(10)
     if "/auth/login" in driver.current_url:
         driver.find_element(By.NAME, "email").send_keys(settings.TEST_BUYER_LOGIN)
@@ -34,10 +34,10 @@ def interactive_purchase_approval(
     return response_url
 
 
-def test_one_time_purchase(op_seller_account, live_settings, browser_driver):
+def test_one_time_payment(op_seller_account, live_settings, browser_driver):
     settings = live_settings
     ###################################################################################################
-    # REQUEST PURCHASE ENDPOINT
+    # INITIATE PAYMENT
     ###################################################################################################
     if not settings.TEST_BUYER_WALLET or not settings.TEST_REDIRECT_URI:
         raise ValueError("A test buyer wallet and redirect URI are required.")
@@ -53,18 +53,18 @@ def test_one_time_purchase(op_seller_account, live_settings, browser_driver):
     # 3. BUYER QUOTE REQUEST PROCESS
     order.request_quote(incoming_payment_id=incoming_payment_response.id)
     # This could be returned to the buyer for review, but we'll skip this for now...
-    # 4. REQUEST BUYER INTERACTIVE GRANT FOR PURCHASE
-    purchase_endpoint = order.get_purchase_endpoint(amount=amount)
+    # 4. REQUEST BUYER INTERACTIVE GRANT FOR PAYMENT
+    payment_redirect = order.initiate_payment(amount=amount)
     # Could also test saving of `order.pending_payment`
     ###################################################################################################
-    # HAND OFF FOR INTERACTIVE PURCHASE APPROVAL
+    # HAND OFF FOR INTERACTIVE PAYMENT AUTHORIZATION
     ###################################################################################################
-    response_url = interactive_purchase_approval(
-        purchase_endpoint, browser_driver, settings
+    response_url = interactive_payment_approval(
+        payment_redirect, browser_driver, settings
     )
     if not response_url:
         raise ValueError(
-            "Something went wrong during interactive purchase approval. Check the endpoints."
+            "Something went wrong during interactive payment authorization. Check the endpoints."
         )
     response_url = urlparse(response_url)
     received_hash = parse_qs(response_url.query)["hash"][0]

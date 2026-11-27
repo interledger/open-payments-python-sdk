@@ -15,17 +15,17 @@ from ...utils.parser import paymentsparser
 
 class PendingIncomingPaymentTransaction(BaseModel):
     """
-    References to recover and continue a pending incoming payment.
+    Stored context for recovering a one-off Open Payments flow.
     """
 
     id: ULID = Field(..., description="Tracking key needed to recover the transaction.")
     buyer: WalletAddress = Field(
         ...,
-        description="Data for the buyer's open payments wallet",
+        description="Data for the sender's Open Payments wallet",
     )
     seller: WalletAddress = Field(
         ...,
-        description="Data for the seller's open payments wallet",
+        description="Data for the recipient's Open Payments wallet",
     )
     incoming_payment_id: Optional[AnyUrl] = Field(
         None,
@@ -44,12 +44,12 @@ class PendingIncomingPaymentTransaction(BaseModel):
     incoming_payment: Optional[IncomingPaymentResponse] = Field(
         None,
         repr=False,
-        description="Validated incoming resource created during purchase initiation.",
+        description="Validated incoming resource created during payment initiation.",
     )
     quote: Optional[Quote] = Field(
         None,
         repr=False,
-        description="Validated quote defining the purchase amounts and expiry metadata.",
+        description="Validated quote defining the payment amounts and expiry metadata.",
     )
     client_nonce: Optional[str] = Field(
         None,
@@ -61,7 +61,7 @@ class PendingIncomingPaymentTransaction(BaseModel):
         description="Exact grant initiation endpoint used with the stored client nonce.",
     )
     interactive_redirect: Optional[AnyUrl] = Field(
-        None, description="URL redirect endpoint to send to the buyer."
+        None, description="Interaction redirect URI to send to the sender."
     )
     finish_id: Optional[str] = Field(
         None,
@@ -119,7 +119,7 @@ class PendingIncomingPaymentTransaction(BaseModel):
 
 class SellerOpenPaymentAccount(BaseModel):
     """
-    Convenience schema to normalise submitted seller open payments data.
+    Normalize the recipient's signing-account configuration.
     """
 
     walletAddressUrl: str = Field(
@@ -133,7 +133,7 @@ class SellerOpenPaymentAccount(BaseModel):
     )
     keyId: str = Field(
         ...,
-        description="The types of actions the client instance will take at the RS as an array of strings.",
+        description="Identifier of the signing key registered for the client.",
     )
 
     model_config = ConfigDict(hide_input_in_errors=True)
