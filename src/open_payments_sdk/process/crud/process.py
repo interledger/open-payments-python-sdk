@@ -9,7 +9,7 @@ from ...errors import ConfigurationError
 from ...http import HttpClient, HttpClientProtocol
 from ...client.client import OpenPaymentsClient
 from ...api.auth import GrantRequest, Grant, InteractRef
-from ...models.auth import GrantResponse, InteractionInstructionsResponse
+from ...models.auth import Finish, GrantResponse, InteractionInstructionsResponse
 from ...models.wallet import WalletAddress
 from ...models.resource import (
     IncomingPaymentRequest,
@@ -285,7 +285,12 @@ class OpenPaymentsProcessor:
                 raise ValueError(
                     "Payment initiation already started for this transaction"
                 )
-            self.pending_payment.client_nonce = secrets.token_urlsafe(32)
+            finish = Finish(
+                method="redirect",
+                uri=self.redirect_uri,
+                nonce=secrets.token_urlsafe(32),
+            )
+            self.pending_payment.client_nonce = finish.nonce
             self.pending_payment.grant_endpoint = str(self.sender_wallet.authServer)
             self.pending_payment.incoming_amount = (
                 payment_request.incomingAmount.model_copy(deep=True)
@@ -334,11 +339,7 @@ class OpenPaymentsProcessor:
                 "client": str(self.recipient_wallet.id),
                 "interact": {
                     "start": ["redirect"],
-                    "finish": {
-                        "method": "redirect",
-                        "uri": self.redirect_uri,
-                        "nonce": self.pending_payment.client_nonce,
-                    },
+                    "finish": finish,
                 },
             },
         )

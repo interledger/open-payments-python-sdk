@@ -369,6 +369,114 @@ def payment_responses(incoming, quote, outgoing=PENDING):
 
 
 @pytest.mark.parametrize("entrypoint", ["initiate_payment", "get_purchase_endpoint"])
+@pytest.mark.parametrize(
+    "callback",
+    [
+        None,
+        False,
+        12,
+        b"https://app.example/callback",
+        {},
+        "",
+        "/relative/DO-NOT-PRINT-callback",
+        "https://app.example/DO-NOT-PRINT-callback with spaces",
+        "https://app.example/DO-NOT-PRINT-callback\n",
+        "https://app.example/DO-NOT-PRINT-callback%ZZ",
+    ],
+)
+def test_invalid_callbacks_leave_initiation_unclaimed_and_can_be_corrected(
+    context, entrypoint, callback
+):
+    processor, http = context.processor, context.http
+    valid_callback = processor.redirect_uri
+    processor.redirect_uri = callback
+    before = processor.pending_payment.model_dump_json()
+    with pytest.raises(ValidationError) as caught:
+        getattr(processor, entrypoint)(amount="1000")
+    assert processor.pending_payment.model_dump_json() == before
+    assert len(http.requests) == 2
+    assert "DO-NOT-PRINT-callback" not in str(caught.value) + repr(caught.value)
+
+    processor.redirect_uri = valid_callback
+    http.responses.extend(payment_responses(INCOMING, QUOTE))
+    redirect = getattr(processor, entrypoint)(amount="1000")
+    assert str(redirect) == PENDING["interact"]["redirect"]
+    assert len(http.requests) == 7
+    finish = json.loads(http.requests[-1].content)["interact"]["finish"]
+    assert finish["uri"] == valid_callback
+    assert finish["nonce"] == processor.pending_payment.client_nonce
+
+
+@pytest.mark.parametrize(
+    "prefix, expected_prefix",
+    [
+        ("https://app.example/callback/", "https://app.example/callback/"),
+        ("http://127.0.0.1:8080/callback/", "http://127.0.0.1:8080/callback/"),
+        ("com.example.app:/finish/", "com.example.app:/finish/"),
+        (
+            "https://app.example/callback?session=%2f&payment=",
+            "https://app.example/callback?session=%2f&payment=",
+        ),
+        ("https://APP.EXAMPLE:443/callback/", "https://app.example/callback/"),
+    ],
+)
+def test_callback_prefixes_keep_existing_uri_contract_and_transaction_suffix(
+    context, keyid_private_key, prefix, expected_prefix
+):
+    http = context.http
+    recipient, sender = (
+        context.processor.recipient_wallet,
+        context.processor.sender_wallet,
+    )
+    http.responses.extend(
+        [
+            httpx.Response(
+                200, json=recipient.model_dump(mode="json", exclude_unset=True)
+            ),
+            httpx.Response(
+                200, json=sender.model_dump(mode="json", exclude_unset=True)
+            ),
+        ]
+    )
+    with OpenPaymentsProcessor(
+        recipient=context.processor.recipient,
+        sender=str(sender.id),
+        http_client=http.client,
+        redirect_uri=prefix,
+    ) as processor:
+        expected_uri = expected_prefix + str(processor.pending_payment.id)
+        assert processor.redirect_uri == prefix + str(processor.pending_payment.id)
+        http.responses.extend(payment_responses(INCOMING, QUOTE))
+        processor.initiate_payment(amount="1000")
+        finish = json.loads(http.requests[-1].content)["interact"]["finish"]
+        assert finish["uri"] == expected_uri
+        assert finish["nonce"] == processor.pending_payment.client_nonce
+        key = load_private_key(
+            keyid_private_key["private_key"], format="pem"
+        ).public_key()
+        assert verify_request_signature(
+            http.requests[-1], public_key=key, key_id=keyid_private_key["keyid"]
+        )
+
+
+def test_callback_and_nonce_are_captured_before_resource_requests(context, monkeypatch):
+    processor, http = context.processor, context.http
+    callback = processor.redirect_uri
+    http.responses.extend(payment_responses(INCOMING, QUOTE))
+    send = http.client.send
+
+    def update_configuration(request):
+        processor.redirect_uri = "/changed-after-preflight"
+        return send(request)
+
+    monkeypatch.setattr(http.client, "send", update_configuration)
+    processor.initiate_payment(amount="1000")
+    finish = json.loads(http.requests[-1].content)["interact"]["finish"]
+    assert finish["uri"] == callback
+    assert finish["nonce"] == processor.pending_payment.client_nonce
+
+
+@pytest.mark.parametrize("entrypoint", ["initiate_payment", "get_purchase_endpoint"])
 def test_payment_snapshots_intent_resources_and_interactive_grant_before_recovery(
     context, monkeypatch, keyid_private_key, entrypoint
 ):
