@@ -225,7 +225,7 @@ with UnauthenticatedClient() as client:
     )
 ```
 
-Public incoming reads return `PublicIncomingPayment` with the required `authServer` and `methods`; `walletAddress` is not required. Resource URLs must be absolute HTTP(S) URLs, including any path prefix and opaque query data. Payment pointers and bare host/path forms are for wallet discovery. Both client types expose `client.incoming_payments.get_public(url)`; the public client also offers the shorter `get(url)`. Authenticated clients retain their signed `get_incoming_payment(...)` method. Public reads use no access token or signature and do not fall back to a signed request.
+Public incoming reads return `PublicIncomingPayment` with the required `authServer` and `methods`; `walletAddress` is not required. Resource URLs must be absolute HTTP(S) URLs, including any path prefix and opaque query data. Payment pointers and bare host/path forms are for wallet discovery. Both client types expose `client.incoming_payments.get_public(url)`; the public client also offers the shorter `get(url)`. Authenticated clients offer signed `get(url, access_token)` and retain `get_incoming_payment(...)`. Public reads use no access token or signature and do not fall back to a signed request.
 
 Wallet metadata and JWKS operations accept HTTP(S) URLs, payment pointers and the existing bare host/path form. `wallet.get_wallet_address(wallet_address_server_endpoint=...)` remains available, and `client.wallet_address` is an alias of `client.wallet` on both client types. Authenticated clients use the same unsigned discovery operations. `get_keys` appends `/jwks.json` to the wallet path before any query string, preserving path prefixes and opaque query data; it does not first fetch the wallet metadata.
 
@@ -365,6 +365,40 @@ authenticated_client.access_tokens.revoke(
 Both methods accept complete HTTP(S) URLs, including opaque paths and queries, and send signed bodyless requests. Rotation requires an HTTP 200 response with the envelope; revocation requires HTTP 204 and returns `None` without decoding JSON. Each call uses the supplied credentials. Earlier results remain unchanged, and the SDK does not store replacement tokens, schedule rotation, follow signed redirects or retry.
 
 The compatibility helpers keep their existing parameter names and order: `post_rotate_access_token(token_id, auth_server_endpoint, access_token)` and `delete_access_token(token_id, auth_server_endpoint, access_token)`. They retain the conventional `/token/{id}` URL adapter. The rotation helper now validates the correct response envelope and returns its nested `AccessToken`, preserving its existing Python return type. A bare token response is rejected as invalid protocol data.
+
+## Incoming payment operations
+
+Create an incoming payment using the wallet's resource-server base URL and an `IncomingPaymentRequest`. Use the complete returned payment `id` for private reads and completion, supplying the access token authorized for each action:
+
+```python
+from open_payments_sdk import OpenPaymentsClient
+from open_payments_sdk.models.resource import IncomingPaymentRequest
+
+with OpenPaymentsClient(
+    keyid=key_pair.jwks.keys[0].kid,
+    private_key=key_pair.private_key_pem,
+) as client:
+    created = client.incoming_payments.create(
+        url=wallet.resourceServer,
+        payment=IncomingPaymentRequest(
+            walletAddress=wallet.id,
+            metadata={"externalRef": "INV-2026-0137"},
+        ),
+        access_token=create_access_token,
+    )
+    current = client.incoming_payments.get(
+        url=created.id,
+        access_token=read_access_token,
+    )
+    completed = client.incoming_payments.complete(
+        url=current.id,
+        access_token=complete_access_token,
+    )
+```
+
+These methods accept HTTP(S) strings, `AnyUrl` or `httpx.URL` values. `create` trims trailing slashes from the base path and appends `/incoming-payments`. `get` uses the complete resource URL. `complete` appends `/complete` to that resource path exactly as returned. Suffixes are inserted before any query, retaining its escaping, ordering and explicit empty `?` marker. Paths can contain opaque provider prefixes and identifiers. Creation exports its required model once; reads and completion use signed bodyless requests. Signed operations reject redirects without replaying the request.
+
+Creation and private reads return `IncomingPaymentResponse` with methods and optional metadata; completion returns `IncomingPayment` and validates its completed state. See the incoming-payment model section for the amount and state checks. The existing `post_create_payment(payment, resource_server_endpoint, access_token)`, `get_incoming_payment(payment_id, resource_server_endpoint, access_token)` and `post_complete_incoming_payment(payment_id, resource_server_endpoint, access_token)` helpers keep their parameter names and order and delegate to these operations. Their conventional paths also preserve base-URL queries before appended route suffixes.
 
 ## SDK operation errors
 

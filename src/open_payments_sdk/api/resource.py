@@ -31,6 +31,16 @@ from open_payments_sdk.utils.urls import UrlInput, validate_request_url
 _IncomingPaymentType = TypeVar("_IncomingPaymentType", bound=IncomingPayment)
 
 
+def _append_url_path(
+    url: UrlInput, suffix: str, *, strip_trailing_slashes: bool = False
+) -> str:
+    """Append a route suffix before an existing query, preserving spelling."""
+    path, separator, query = validate_request_url(url).partition("?")
+    if strip_trailing_slashes:
+        path = path.rstrip("/")
+    return path + suffix + separator + query
+
+
 def _validate_incoming_payment(
     payment: _IncomingPaymentType,
     *,
@@ -114,17 +124,14 @@ class IncomingPayments(SecurityBase):
         return _get_public_incoming_payment(self.http_client, url)
 
     @_sdk_operation("incoming_payments.create")
-    def post_create_payment(
+    def create(
         self,
+        url: UrlInput,
         payment: IncomingPaymentRequest,
-        resource_server_endpoint: str,
         access_token: str,
     ) -> IncomingPaymentResponse:
-        """
-        Create Incoming Payment
-        """
-        base_url = resource_server_endpoint.rstrip("/")
-        url = f"{base_url}/incoming-payments"
+        """Create under the resource-server base URL with a typed request body."""
+        url = _append_url_path(url, "/incoming-payments", strip_trailing_slashes=True)
         result = _execute_request(
             self.http_client,
             "POST",
@@ -139,6 +146,16 @@ class IncomingPayments(SecurityBase):
         return _validate_incoming_payment(
             result, method="POST", url=url, status=201, state="created"
         )
+
+    @_sdk_operation("incoming_payments.create")
+    def post_create_payment(
+        self,
+        payment: IncomingPaymentRequest,
+        resource_server_endpoint: str,
+        access_token: str,
+    ) -> IncomingPaymentResponse:
+        """Compatibility adapter retaining the existing request/endpoint arguments."""
+        return self.create(resource_server_endpoint, payment, access_token)
 
     @_sdk_operation("incoming_payments.list")
     def get_incoming_payments(
@@ -161,14 +178,9 @@ class IncomingPayments(SecurityBase):
         )
 
     @_sdk_operation("incoming_payments.get")
-    def get_incoming_payment(
-        self, payment_id: str, resource_server_endpoint: str, access_token: str
-    ) -> IncomingPaymentResponse:
-        """
-        Get Incoming Payment
-        """
-        base_url = resource_server_endpoint.rstrip("/")
-        url = f"{base_url}/incoming-payments/{payment_id}"
+    def get(self, url: UrlInput, access_token: str) -> IncomingPaymentResponse:
+        """Read private payment details from the complete returned resource URL."""
+        url = validate_request_url(url)
         result = _execute_request(
             self.http_client,
             "GET",
@@ -179,15 +191,22 @@ class IncomingPayments(SecurityBase):
         )
         return _validate_incoming_payment(result, method="GET", url=url, status=200)
 
-    @_sdk_operation("incoming_payments.complete")
-    def post_complete_incoming_payment(
+    @_sdk_operation("incoming_payments.get")
+    def get_incoming_payment(
         self, payment_id: str, resource_server_endpoint: str, access_token: str
-    ) -> IncomingPayment:
-        """
-        Complete Incoming Payment
-        """
-        base_url = resource_server_endpoint.rstrip("/")
-        url = f"{base_url}/incoming-payments/{payment_id}/complete"
+    ) -> IncomingPaymentResponse:
+        """Compatibility adapter retaining conventional base/path/ID construction."""
+        url = _append_url_path(
+            resource_server_endpoint,
+            f"/incoming-payments/{payment_id}",
+            strip_trailing_slashes=True,
+        )
+        return self.get(url, access_token)
+
+    @_sdk_operation("incoming_payments.complete")
+    def complete(self, url: UrlInput, access_token: str) -> IncomingPayment:
+        """Complete the returned payment URL by appending /complete before its query."""
+        url = _append_url_path(url, "/complete")
         result = _execute_request(
             self.http_client,
             "POST",
@@ -199,6 +218,18 @@ class IncomingPayments(SecurityBase):
         return _validate_incoming_payment(
             result, method="POST", url=url, status=200, state="completed"
         )
+
+    @_sdk_operation("incoming_payments.complete")
+    def post_complete_incoming_payment(
+        self, payment_id: str, resource_server_endpoint: str, access_token: str
+    ) -> IncomingPayment:
+        """Compatibility adapter retaining conventional base/path/ID construction."""
+        url = _append_url_path(
+            resource_server_endpoint,
+            f"/incoming-payments/{payment_id}",
+            strip_trailing_slashes=True,
+        )
+        return self.complete(url, access_token)
 
 
 class OutgoingPayments(SecurityBase):
