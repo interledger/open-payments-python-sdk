@@ -1,5 +1,6 @@
-"""HTTP request construction and shared operation response handling."""
+"""HTTP request construction and shared sync/async operation response handling."""
 
+from contextlib import contextmanager
 from math import isfinite
 from threading import Lock
 from typing import Any, Callable, Protocol, Sequence, TypeVar, overload
@@ -64,10 +65,11 @@ def _status_error(response: httpx.Response, request: httpx.Request):
     )
 
 
-def _send(client, request: httpx.Request, **options) -> httpx.Response:
-    """Normalize native and legacy injected HTTP-client failures once."""
+@contextmanager
+def _transport_errors(request: httpx.Request):
+    """Normalize transport failures for both synchronous and awaited dispatch."""
     try:
-        response = client.send(request=request, **options)
+        yield
     except httpx.HTTPStatusError as error:
         raise _status_error(error.response, request) from None
     except httpx.TimeoutException:
@@ -88,6 +90,21 @@ def _send(client, request: httpx.Request, **options) -> httpx.Response:
         ) from None
     except httpx.RequestError:
         raise TransportError(method=request.method, url=request.url) from None
+
+
+def _send(client, request: httpx.Request, **options) -> httpx.Response:
+    """Normalize native and legacy injected HTTP-client failures once."""
+    with _transport_errors(request):
+        response = client.send(request=request, **options)
+    if not 200 <= response.status_code < 300:
+        raise _status_error(response, request)
+    return response
+
+
+async def _async_send(client, request: httpx.Request, **options) -> httpx.Response:
+    """Await one native send without retrying or swallowing cancellation."""
+    with _transport_errors(request):
+        response = await client.send(request=request, **options)
     if not 200 <= response.status_code < 300:
         raise _status_error(response, request)
     return response
@@ -121,6 +138,19 @@ def _request_result(
     expected_status: int = 200,
 ) -> T | None:
     response = _send(client, request)
+    return _response_result(
+        response, request, response_model, expected_status=expected_status
+    )
+
+
+def _response_result(
+    response: httpx.Response,
+    request: httpx.Request,
+    response_model: type[T] | None,
+    *,
+    expected_status: int = 200,
+) -> T | None:
+    """Apply the same status, JSON and schema contract after either kind of I/O."""
     metadata = dict(method=request.method, url=request.url, status=response.status_code)
     if response.status_code != expected_status:
         raise ResponseError(**metadata, reason="unexpected_status")
@@ -139,6 +169,39 @@ def _request_result(
             reason="validation",
             validation_errors=_validation_issues(error, _schema_fields(response_model)),
         ) from None
+
+
+@overload
+async def _async_request_result(
+    client,
+    request: httpx.Request,
+    response_model: type[T],
+    *,
+    expected_status: int = 200,
+) -> T: ...
+
+
+@overload
+async def _async_request_result(
+    client,
+    request: httpx.Request,
+    response_model: None,
+    *,
+    expected_status: int = 200,
+) -> None: ...
+
+
+async def _async_request_result(
+    client,
+    request: httpx.Request,
+    response_model: type[T] | None,
+    *,
+    expected_status: int = 200,
+) -> T | None:
+    response = await _async_send(client, request)
+    return _response_result(
+        response, request, response_model, expected_status=expected_status
+    )
 
 
 class _NotGiven:
@@ -302,6 +365,71 @@ def _execute_request(
     )
 
 
+@overload
+async def _async_execute_request(
+    client: "AsyncHttpClientProtocol",
+    method: str,
+    url: str,
+    response_model: type[T],
+    *,
+    body: BaseModel | _NotGiven = _NOT_GIVEN,
+    body_model: type[BaseModel] = BaseModel,
+    query: BaseModel | _NotGiven = _NOT_GIVEN,
+    query_model: type[BaseModel] = BaseModel,
+    access_token: str | _NotGiven = _NOT_GIVEN,
+    signer: _RequestSigner | None = None,
+    expected_status: int = 200,
+) -> T: ...
+
+
+@overload
+async def _async_execute_request(
+    client: "AsyncHttpClientProtocol",
+    method: str,
+    url: str,
+    response_model: None,
+    *,
+    body: BaseModel | _NotGiven = _NOT_GIVEN,
+    body_model: type[BaseModel] = BaseModel,
+    query: BaseModel | _NotGiven = _NOT_GIVEN,
+    query_model: type[BaseModel] = BaseModel,
+    access_token: str | _NotGiven = _NOT_GIVEN,
+    signer: _RequestSigner | None = None,
+    expected_status: int = 200,
+) -> None: ...
+
+
+async def _async_execute_request(
+    client: "AsyncHttpClientProtocol",
+    method: str,
+    url: str,
+    response_model: type[T] | None,
+    *,
+    body: BaseModel | _NotGiven = _NOT_GIVEN,
+    body_model: type[BaseModel] = BaseModel,
+    query: BaseModel | _NotGiven = _NOT_GIVEN,
+    query_model: type[BaseModel] = BaseModel,
+    access_token: str | _NotGiven = _NOT_GIVEN,
+    signer: _RequestSigner | None = None,
+    expected_status: int = 200,
+) -> T | None:
+    """Prepare and sign once, then await the shared response boundary."""
+    request = _prepare_request(
+        client,
+        method,
+        url,
+        body=body,
+        body_model=body_model,
+        query=query,
+        query_model=query_model,
+        access_token=access_token,
+        signer=signer,
+    )
+    return await _async_request_result(
+        client, request, response_model, expected_status=expected_status
+    )
+
+
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _PUBLIC_CREDENTIAL_HEADERS = (
     "authorization",
@@ -427,6 +555,12 @@ class HttpClientProtocol(_RequestBuilder, Protocol):
     """Minimal interface accepted for a caller-owned SDK request transport."""
 
     def send(self, request: Request) -> Response: ...
+
+
+class AsyncHttpClientProtocol(_RequestBuilder, Protocol):
+    """Synchronous request preparation with a native asynchronous send method."""
+
+    async def send(self, request: Request) -> Response: ...
 
 
 class HttpClient(HttpClientProtocol):
