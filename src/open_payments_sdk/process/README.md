@@ -66,6 +66,12 @@ The processor exposes `sender`, `recipient`, `sender_wallet` and `recipient_wall
 
 `SellerOpenPaymentAccount` and `PendingIncomingPaymentTransaction` remain exact aliases for the new class names. Existing `buyer`/`seller` constructor arguments, processor attributes and state attributes remain supported, referring to the same values. Supply one name for each actor; competing constructor arguments or duplicate actor keys in saved input are rejected. Default state dumps keep the existing `buyer` and `seller` keys, so existing serialized records remain readable without migration.
 
+### Processor lifetime
+
+Call `processor.close()` when finished, or use the processor as a context manager as shown below. The processor closes its default HTTP transport, including after a constructor failure. A caller-supplied SDK transport, minimal synchronous transport or native `httpx.Client` remains owned by the caller and stays open after processor cleanup. Closing is idempotent, and `processor.is_closed` reports whether its client is closed.
+
+Finish in-flight calls before closing; closing does not cancel them. A closed processor rejects further payment operations before claiming an initiation or completion attempt. Closing does not discard or persist `pending_payment`; save that state separately, including when an operation raises.
+
 ### Stored consent and completion attempts
 
 `initiate_payment(amount=...)` creates the incoming payment and quote, requests an outgoing payment grant, and returns its interaction redirect URI. It generates a fresh unpredictable `client_nonce` and records the exact `grant_endpoint` used for initiation. These values, the server's `finish_id`, continuation credentials and payment/quote references are part of `pending_payment`. Persist that model before handing the redirect to the sender. Its serialized data contains credentials and must be kept in your protected transaction store.
@@ -101,21 +107,21 @@ from open_payments_sdk.process.crud import OpenPaymentsProcessor
 from open_payments_sdk.process.models import PendingPayment
 
 restored = PendingPayment.model_validate_json(saved_state_json)
-processor = OpenPaymentsProcessor(
+with OpenPaymentsProcessor(
     recipient=account,
     sender=str(restored.sender.id),
     redirect_uri=callback_prefix,
     http_client=http_client,
     pending_payment=restored,
-)
-try:
-    outgoing = processor.complete_payment(
-        interact_ref=interact_ref,
-        received_hash=received_hash,
-        pending_payment=processor.pending_payment,
-    )
-finally:
-    save_state(restored.model_dump_json(exclude_unset=True))
+) as processor:
+    try:
+        outgoing = processor.complete_payment(
+            interact_ref=interact_ref,
+            received_hash=received_hash,
+            pending_payment=processor.pending_payment,
+        )
+    finally:
+        save_state(restored.model_dump_json(exclude_unset=True))
 ```
 
 Use the saved canonical wallet IDs for the expected sender and recipient, and supply currently authorized signing credentials in `account`. Restoration verifies those wallet identities and uses copies of the stored wallet metadata. It makes no discovery requests and generates no new transaction ID or nonce. Callback verification still uses the original stored grant endpoint and interaction context. Signing credentials may be updated by supplying a new account configuration; the pending state contains no private signing key.

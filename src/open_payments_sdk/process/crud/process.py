@@ -1,10 +1,12 @@
 import secrets
 from threading import Lock
 
+import httpx
 from ulid import ULID
 from pydantic import AnyUrl, HttpUrl
 
-from ...http import HttpClient
+from ...errors import ConfigurationError
+from ...http import HttpClient, HttpClientProtocol
 from ...client.client import OpenPaymentsClient
 from ...api.auth import GrantRequest, Grant, InteractRef
 from ...models.auth import GrantResponse, InteractionInstructionsResponse
@@ -47,7 +49,7 @@ class OpenPaymentsProcessor:
         *,
         recipient: OpenPaymentAccount | None = None,
         sender: str | None = None,
-        http_client: HttpClient | None = None,
+        http_client: HttpClientProtocol | httpx.Client | None = None,
         redirect_uri: str,
         seller: OpenPaymentAccount | None = None,
         buyer: str | None = None,
@@ -75,30 +77,67 @@ class OpenPaymentsProcessor:
                 raise ValueError(
                     "Stored payment state does not match processor wallets"
                 )
-        if http_client is None:
-            http_client = HttpClient(http_timeout=10.0)
-        self.http_client = http_client
-        self.client = OpenPaymentsClient(
-            keyid=self.recipient.keyId,
-            private_key=self.recipient.privateKey,
-            client_wallet_address=self.recipient.walletAddressUrl,
-            http_client=self.http_client,
+        self._owned_http_client = (
+            HttpClient(http_timeout=10.0) if http_client is None else None
         )
-        if pending_payment is not None:
-            # Bind wallet identities separately while retaining the same claimable
-            # state object for the application's durable persistence.
-            self.recipient_wallet = pending_payment.recipient.model_copy(deep=True)
-            self.sender_wallet = pending_payment.sender.model_copy(deep=True)
-            self.pending_payment = pending_payment
-        else:
-            self.recipient_wallet = self.client.wallet.get_wallet_address(
-                self.recipient.walletAddressUrl
+        self.http_client = (
+            self._owned_http_client if http_client is None else http_client
+        )
+        try:
+            self.client = OpenPaymentsClient(
+                keyid=self.recipient.keyId,
+                private_key=self.recipient.privateKey,
+                client_wallet_address=self.recipient.walletAddressUrl,
+                http_client=self.http_client,
             )
-            self.sender_wallet = self.client.wallet.get_wallet_address(self.sender)
-            self.pending_payment = PendingPayment(
-                id=ULID(), recipient=self.recipient_wallet, sender=self.sender_wallet
-            )
-        self.redirect_uri = f"{redirect_uri}{self.pending_payment.id}"
+        except BaseException:
+            if self._owned_http_client is not None:
+                self._owned_http_client.close()
+            raise
+        try:
+            if pending_payment is not None:
+                # Bind wallet identities separately while retaining the same claimable
+                # state object for the application's durable persistence.
+                self.recipient_wallet = pending_payment.recipient.model_copy(deep=True)
+                self.sender_wallet = pending_payment.sender.model_copy(deep=True)
+                self.pending_payment = pending_payment
+            else:
+                self.recipient_wallet = self.client.wallet.get_wallet_address(
+                    self.recipient.walletAddressUrl
+                )
+                self.sender_wallet = self.client.wallet.get_wallet_address(self.sender)
+                self.pending_payment = PendingPayment(
+                    id=ULID(),
+                    recipient=self.recipient_wallet,
+                    sender=self.sender_wallet,
+                )
+            self.redirect_uri = f"{redirect_uri}{self.pending_payment.id}"
+        except BaseException:
+            self.close()
+            raise
+
+    @property
+    def is_closed(self) -> bool:
+        return self.client.is_closed
+
+    def _check_open(self) -> None:
+        if self.is_closed:
+            raise ConfigurationError(reason="closed")
+
+    def close(self) -> None:
+        """Close the processor and its owned transport; preserve borrowed clients."""
+        try:
+            self.client.close()
+        finally:
+            if self._owned_http_client is not None:
+                self._owned_http_client.close()
+
+    def __enter__(self) -> "OpenPaymentsProcessor":
+        self._check_open()
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_traceback) -> None:
+        self.close()
 
     @property
     def seller(self) -> OpenPaymentAccount:
@@ -143,6 +182,7 @@ class OpenPaymentsProcessor:
     def request_grant(
         self, *, grant: str, actions: list[str], endpoint: AnyUrl
     ) -> Grant:
+        self._check_open()
         request = GrantRequest(
             **{
                 "access_token": {
@@ -179,6 +219,7 @@ class OpenPaymentsProcessor:
 
     def request_incoming_payment(self, *, amount: int | str):
         """Request an incoming payment for the recipient."""
+        self._check_open()
         payment = self._incoming_payment_request(amount)
         grant = self.request_grant(
             grant="incoming-payment",
@@ -200,6 +241,7 @@ class OpenPaymentsProcessor:
 
     def request_quote(self, *, incoming_payment_id: str | HttpUrl | AnyUrl) -> Quote:
         """Request a quote from the sender's resource server."""
+        self._check_open()
         quote = QuoteRequest(
             **{
                 "walletAddress": self.sender_wallet.id,
@@ -230,6 +272,7 @@ class OpenPaymentsProcessor:
         Create an incoming payment and quote, then request an outgoing payment
         grant and return the sender's interaction redirect URI.
         """
+        self._check_open()
         if self._restored:
             raise ValueError("A restored payment cannot restart initiation")
         payment_request = self._incoming_payment_request(amount)
@@ -335,6 +378,7 @@ class OpenPaymentsProcessor:
         Verify the sender's interaction callback against stored payment state,
         continue the grant and create the outgoing payment.
         """
+        self._check_open()
         if not isinstance(pending_payment, PendingPayment):
             raise ValueError("A stored pending payment transaction is required")
         required = (
