@@ -6,7 +6,13 @@ from typing import TypeVar
 import httpx
 
 from open_payments_sdk import configuration
-from open_payments_sdk.api.async_resource import AsyncPublicIncomingPayments
+from open_payments_sdk.api.async_auth import AsyncAccessTokens, AsyncGrants
+from open_payments_sdk.api.async_resource import (
+    AsyncIncomingPayments,
+    AsyncOutgoingPayments,
+    AsyncPublicIncomingPayments,
+    AsyncQuotes,
+)
 from open_payments_sdk.api.async_wallet import AsyncWallet
 from open_payments_sdk.errors import (
     ConfigurationError,
@@ -79,6 +85,62 @@ class _AsyncClientBase:
         await self.aclose()
 
 
+class AsyncOpenPaymentsClient(_AsyncClientBase):
+    """Authenticated native async client with explicit per-operation access tokens."""
+
+    @_sdk_operation("client.initialize")
+    def __init__(
+        self,
+        keyid: str,
+        private_key: str,
+        client_wallet_address: str | None = None,
+        cfg: configuration.Configuration | None = None,
+        http_client: AsyncHttpClientProtocol | httpx.AsyncClient | None = None,
+    ):
+        self._initialize(cfg, http_client)
+        self.client_wallet_address = client_wallet_address
+        self.keyid = keyid
+        self.private_key = private_key
+        try:
+            self._session._check_open()
+            self.grants = AsyncGrants(
+                keyid=keyid,
+                private_key=private_key,
+                logger=self.logger,
+                http_client=self._session,
+                client_wallet_address=client_wallet_address,
+            )
+            self.access_tokens = AsyncAccessTokens(
+                keyid=keyid,
+                private_key=private_key,
+                logger=self.logger,
+                http_client=self._session,
+            )
+            self.wallet = AsyncWallet(self._session)
+            self.wallet_address = self.wallet
+            self.incoming_payments = AsyncIncomingPayments(
+                keyid=keyid,
+                private_key=private_key,
+                logger=self.logger,
+                http_client=self._session,
+            )
+            self.outgoing_payments = AsyncOutgoingPayments(
+                keyid=keyid,
+                private_key=private_key,
+                logger=self.logger,
+                http_client=self._session,
+            )
+            self.quotes = AsyncQuotes(
+                keyid=keyid,
+                private_key=private_key,
+                logger=self.logger,
+                http_client=self._session,
+            )
+        except BaseException:
+            self._session._discard_unopened()
+            raise
+
+
 class AsyncUnauthenticatedClient(_AsyncClientBase):
     """Public async discovery; construction requires no key, wallet or token."""
 
@@ -99,3 +161,6 @@ class AsyncUnauthenticatedClient(_AsyncClientBase):
             # only the unopened SDK wrapper, preserving any borrowed transport.
             self._session._discard_unopened()
             raise
+
+
+AsyncAuthenticatedClient = AsyncOpenPaymentsClient

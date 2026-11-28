@@ -9,6 +9,8 @@ import pytest
 import open_payments_sdk as sdk
 from open_payments_sdk import errors
 from open_payments_sdk.client import (
+    AsyncAuthenticatedClient,
+    AsyncOpenPaymentsClient,
     AsyncUnauthenticatedClient,
     AuthenticatedClient,
     OpenPaymentsClient,
@@ -27,6 +29,12 @@ def test_root_and_client_package_exports_preserve_original_class_identity():
     )
     assert sdk.UnauthenticatedClient is UnauthenticatedClient
     assert sdk.AsyncUnauthenticatedClient is AsyncUnauthenticatedClient
+    assert (
+        sdk.AsyncOpenPaymentsClient
+        is sdk.AsyncAuthenticatedClient
+        is AsyncOpenPaymentsClient
+        is AsyncAuthenticatedClient
+    )
     assert len(sdk.__all__) == len(set(sdk.__all__))
     for name in sdk.__all__:
         assert getattr(sdk, name) is not None
@@ -86,6 +94,7 @@ def test_exported_config_transport_and_url_helpers_are_original_objects(module, 
         "open_payments_sdk.api.resource",
         "open_payments_sdk.api.async_wallet",
         "open_payments_sdk.api.async_resource",
+        "open_payments_sdk.api.async_auth",
     ],
 )
 def test_fresh_imports_and_public_context_make_no_requests_or_keys(entry):
@@ -110,10 +119,12 @@ class NoAsyncPool(httpx.AsyncClient):
         forbidden()
 httpx.AsyncClient = NoAsyncPool
 importlib.import_module(sys.argv[1])
-from open_payments_sdk import AuthenticatedClient, OpenPaymentsClient, UnauthenticatedClient, AsyncUnauthenticatedClient
+from open_payments_sdk import AuthenticatedClient, OpenPaymentsClient, UnauthenticatedClient, AsyncUnauthenticatedClient, AsyncAuthenticatedClient, AsyncOpenPaymentsClient
 from open_payments_sdk.client import UnauthenticatedClient as PackageClient
 from open_payments_sdk.client.client import OpenPaymentsClient as LegacyClient
+from open_payments_sdk.client.async_client import AsyncOpenPaymentsClient as NativeAsyncClient
 assert AuthenticatedClient is OpenPaymentsClient is LegacyClient
+assert AsyncAuthenticatedClient is AsyncOpenPaymentsClient is NativeAsyncClient
 assert UnauthenticatedClient is PackageClient
 with UnauthenticatedClient() as client:
     assert client.wallet is client.wallet_address
