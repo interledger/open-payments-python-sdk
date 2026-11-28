@@ -1,6 +1,5 @@
 """Offline fixtures and explicit gates for external test environments."""
 
-import socket
 from collections import deque
 from types import SimpleNamespace
 
@@ -11,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from open_payments_sdk.client.client import OpenPaymentsClient
 from open_payments_sdk.http import HttpClient
+from tests.network import block_network
 
 
 def pytest_addoption(parser):
@@ -56,10 +56,7 @@ def block_offline_network(request, monkeypatch):
             "Network access is disabled for offline tests; use the mock HTTP fixture"
         )
 
-    monkeypatch.setattr(socket, "getaddrinfo", blocked)
-    monkeypatch.setattr(socket, "create_connection", blocked)
-    monkeypatch.setattr(socket.socket, "connect", blocked)
-    monkeypatch.setattr(socket.socket, "connect_ex", blocked)
+    block_network(monkeypatch.setattr, blocked)
 
 
 @pytest.fixture

@@ -97,16 +97,21 @@ def test_exported_config_transport_and_url_helpers_are_original_objects(module, 
         "open_payments_sdk.api.async_auth",
     ],
 )
-def test_fresh_imports_and_public_context_make_no_requests_or_keys(entry):
+@pytest.mark.parametrize("fallback_socketpair", [False, True])
+def test_fresh_imports_and_public_context_make_no_requests_or_keys(
+    entry, fallback_socketpair
+):
     script = """
 import asyncio, importlib, socket, sys
 import httpx
+from tests.network import block_network
+if sys.argv[2] == "fallback":
+    socket.socketpair = socket._fallback_socketpair
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 def forbidden(*args, **kwargs):
     raise AssertionError("Import/construction attempted I/O or key creation/loading")
-socket.getaddrinfo = socket.create_connection = forbidden
-socket.socket.connect = socket.socket.connect_ex = forbidden
+block_network(setattr, forbidden)
 Ed25519PrivateKey.generate = staticmethod(forbidden)
 serialization.load_pem_private_key = forbidden
 serialization.load_der_private_key = forbidden
@@ -141,7 +146,15 @@ asyncio.run(check_async())
 print("verified")
 """
     result = subprocess.run(
-        [sys.executable, "-W", "error", "-c", script, entry],
+        [
+            sys.executable,
+            "-W",
+            "error",
+            "-c",
+            script,
+            entry,
+            "fallback" if fallback_socketpair else "native",
+        ],
         capture_output=True,
         text=True,
         timeout=20,
