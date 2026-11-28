@@ -17,6 +17,8 @@ from open_payments_sdk.models.resource import (
     PaginatedIncomingPayments,
     PaymentListQuery,
     PublicIncomingPayment,
+    Quote,
+    QuoteRequest,
 )
 from open_payments_sdk.utils.urls import UrlInput, validate_request_url
 
@@ -177,3 +179,66 @@ class AsyncIncomingPayments(SecurityBase):
             strip_trailing_slashes=True,
         )
         return await self.complete(url, access_token)
+
+
+class AsyncQuotes(SecurityBase):
+    """Awaited quote operations with the same typed request and response models."""
+
+    def __init__(
+        self,
+        keyid: str,
+        private_key: str,
+        logger: Logger | LoggerAdapter,
+        http_client: AsyncHttpClientProtocol,
+    ):
+        super().__init__(keyid=keyid, private_key=private_key, logger=logger)
+        self.http_client = http_client
+
+    @_async_sdk_operation("quotes.create")
+    async def create(
+        self, url: UrlInput, quote: QuoteRequest, access_token: str
+    ) -> Quote:
+        """Create a debit, receive or inferred-amount quote under the base URL."""
+        url = _append_url_path(url, "/quotes", strip_trailing_slashes=True)
+        return await _async_execute_request(
+            self.http_client,
+            "POST",
+            url,
+            Quote,
+            body=quote,
+            body_model=QuoteRequest,
+            access_token=access_token,
+            signer=self,
+            expected_status=201,
+        )
+
+    @_async_sdk_operation("quotes.create")
+    async def post_create_quote(
+        self, quote: QuoteRequest, resource_server_endpoint: str, access_token: str
+    ) -> Quote:
+        """Retain compatibility quote/endpoint/token argument names and order."""
+        return await self.create(resource_server_endpoint, quote, access_token)
+
+    @_async_sdk_operation("quotes.get")
+    async def get(self, url: UrlInput, access_token: str) -> Quote:
+        """Read at the complete returned quote URL using the supplied token."""
+        return await _async_execute_request(
+            self.http_client,
+            "GET",
+            validate_request_url(url),
+            Quote,
+            access_token=access_token,
+            signer=self,
+        )
+
+    @_async_sdk_operation("quotes.get")
+    async def get_quote(
+        self, quote_id: str, resource_server_endpoint: str, access_token: str
+    ) -> Quote:
+        """Retain conventional base/path/ID construction before any query."""
+        url = _append_url_path(
+            resource_server_endpoint,
+            f"/quotes/{quote_id}",
+            strip_trailing_slashes=True,
+        )
+        return await self.get(url, access_token)

@@ -608,6 +608,34 @@ Creation appends `/quotes` before any base-URL query, trimming trailing path sla
 
 The existing `post_create_quote(quote, resource_server_endpoint, access_token)` and `get_quote(quote_id, resource_server_endpoint, access_token)` helpers keep their parameter names and order and delegate to these methods. Their conventional paths preserve any base query before appended suffixes.
 
+Pass the same `QuoteRequest` models to `AsyncQuotes` for native async creation and retrieval:
+
+```python
+import logging
+
+from open_payments_sdk import AsyncHttpClient
+from open_payments_sdk.api.async_resource import AsyncQuotes
+
+async def create_and_read_quote(
+    key_id, private_key, resource_server, quote_request,
+    create_access_token, read_access_token,
+):
+    async with AsyncHttpClient(10) as transport:
+        quotes = AsyncQuotes(
+            keyid=key_id,
+            private_key=private_key,
+            logger=logging.getLogger(__name__),
+            http_client=transport,
+        )
+        created = await quotes.create(
+            resource_server, quote_request, create_access_token
+        )
+        current = await quotes.get(created.id, read_access_token)
+        return created, current
+```
+
+Both operations return the existing `Quote` model, including its optional expiry string. Await the two compatibility helpers as well. Each request uses the supplied access token without fetching the receiver or retrying. Cancellation propagates; a dispatched creation may have succeeded even if its response was not received.
+
 ## Outgoing payment operations
 
 Create an outgoing payment using the sender wallet's resource-server base URL and an `OutgoingPaymentRequest`. Supply a quote ID, or an incoming-payment ID together with a debit amount. Use the complete returned payment ID for subsequent reads:
