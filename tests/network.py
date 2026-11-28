@@ -4,8 +4,11 @@ import _socket
 import socket
 import sys
 
-_SOCKETPAIR_CODE = getattr(
-    getattr(socket, "_fallback_socketpair", None), "__code__", None
+_FALLBACK_SOCKETPAIR = getattr(socket, "_fallback_socketpair", socket.socketpair)
+_SOCKETPAIR_CODES = tuple(
+    function.__code__
+    for function in (socket.socketpair, getattr(socket, "_fallback_socketpair", None))
+    if hasattr(function, "__code__")
 )
 _CONNECT = _socket.socket.connect
 
@@ -21,7 +24,7 @@ def block_network(patch, blocked):
     def connect(sock, address):
         frame = sys._getframe(1)
         try:
-            if _SOCKETPAIR_CODE is not None and frame.f_code is _SOCKETPAIR_CODE:
+            if any(frame.f_code is code for code in _SOCKETPAIR_CODES):
                 local = frame.f_locals
                 listener = local.get("lsock")
                 if (

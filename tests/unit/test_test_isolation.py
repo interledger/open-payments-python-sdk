@@ -1,5 +1,6 @@
 """Exercise the offline transport and prevent accidental real SDK requests."""
 
+import importlib.util
 import socket
 import threading
 
@@ -45,10 +46,21 @@ def test_unmocked_sdk_request_is_blocked():
 
 
 @pytest.mark.parametrize("backend", ["asyncio", "trio"])
+@pytest.mark.parametrize("legacy_layout", [False, True])
 def test_async_backends_start_with_windows_socketpair_and_network_guard(
-    monkeypatch, backend
+    monkeypatch, backend, legacy_layout
 ):
-    monkeypatch.setattr(socket, "socketpair", socket._fallback_socketpair)
+    monkeypatch.setattr(socket, "socketpair", network._FALLBACK_SOCKETPAIR)
+    if legacy_layout:
+        monkeypatch.delattr(socket, "_fallback_socketpair", raising=False)
+        spec = importlib.util.spec_from_file_location("legacy_guard", network.__file__)
+        legacy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(legacy)
+
+        def blocked(*args, **kwargs):
+            pytest.fail("Network access is disabled")
+
+        legacy.block_network(monkeypatch.setattr, blocked)
 
     async def check():
         await anyio.lowlevel.checkpoint()
@@ -82,7 +94,7 @@ def test_socketpair_exception_does_not_allow_a_concurrent_connection(monkeypatch
 
     def pair():
         try:
-            left, right = socket._fallback_socketpair()
+            left, right = network._FALLBACK_SOCKETPAIR()
             with left, right:
                 left.settimeout(1)
                 right.settimeout(1)
