@@ -2,7 +2,11 @@
 
 from logging import Logger, LoggerAdapter
 
-from open_payments_sdk.api.resource import _append_url_path, _validate_incoming_payment
+from open_payments_sdk.api.resource import (
+    _append_url_path,
+    _validate_incoming_payment,
+    _validate_outgoing_payment,
+)
 from open_payments_sdk.errors import _async_sdk_operation
 from open_payments_sdk.gnap_utils.security import SecurityBase
 from open_payments_sdk.http import (
@@ -14,7 +18,12 @@ from open_payments_sdk.models.resource import (
     IncomingPayment,
     IncomingPaymentRequest,
     IncomingPaymentResponse,
+    OutgoingPayment,
+    OutgoingPaymentGrant,
+    OutgoingPaymentRequest,
+    OutgoingPaymentWithSpentAmounts,
     PaginatedIncomingPayments,
+    PaginatedOutgoingPayments,
     PaymentListQuery,
     PublicIncomingPayment,
     Quote,
@@ -242,3 +251,125 @@ class AsyncQuotes(SecurityBase):
             strip_trailing_slashes=True,
         )
         return await self.get(url, access_token)
+
+
+class AsyncOutgoingPayments(SecurityBase):
+    """Awaited outgoing payments and grant-spent reads with per-call tokens."""
+
+    def __init__(
+        self,
+        keyid: str,
+        private_key: str,
+        logger: Logger | LoggerAdapter,
+        http_client: AsyncHttpClientProtocol,
+    ):
+        super().__init__(keyid=keyid, private_key=private_key, logger=logger)
+        self.http_client = http_client
+
+    @_async_sdk_operation("outgoing_payments.create")
+    async def create(
+        self, url: UrlInput, payment: OutgoingPaymentRequest, access_token: str
+    ) -> OutgoingPaymentWithSpentAmounts:
+        """Create from a quote or incoming payment under the resource-server base."""
+        url = _append_url_path(url, "/outgoing-payments", strip_trailing_slashes=True)
+        result = await _async_execute_request(
+            self.http_client,
+            "POST",
+            url,
+            OutgoingPaymentWithSpentAmounts,
+            body=payment,
+            body_model=OutgoingPaymentRequest,
+            access_token=access_token,
+            signer=self,
+            expected_status=201,
+        )
+        return _validate_outgoing_payment(result, method="POST", url=url, status=201)
+
+    @_async_sdk_operation("outgoing_payments.create")
+    async def post_create_payment(
+        self,
+        payment: OutgoingPaymentRequest,
+        resource_server_endpoint: str,
+        access_token: str,
+    ) -> OutgoingPaymentWithSpentAmounts:
+        """Retain compatibility payment/endpoint/token argument names and order."""
+        return await self.create(resource_server_endpoint, payment, access_token)
+
+    @_async_sdk_operation("outgoing_payments.list")
+    async def list(
+        self, url: UrlInput, query: PaymentListQuery, access_token: str
+    ) -> PaginatedOutgoingPayments:
+        """Read and validate one page without automatic pagination."""
+        url = _append_url_path(url, "/outgoing-payments", strip_trailing_slashes=True)
+        result = await _async_execute_request(
+            self.http_client,
+            "GET",
+            url,
+            PaginatedOutgoingPayments,
+            query=query,
+            query_model=PaymentListQuery,
+            access_token=access_token,
+            signer=self,
+        )
+        for index, payment in enumerate(result.result):
+            _validate_outgoing_payment(
+                payment,
+                method="GET",
+                url=url,
+                status=200,
+                location_prefix=("result", index),
+            )
+        return result
+
+    @_async_sdk_operation("outgoing_payments.list")
+    async def get_outgoing_payments(
+        self, query: PaymentListQuery, resource_server_endpoint: str, access_token: str
+    ) -> PaginatedOutgoingPayments:
+        """Retain compatibility query/endpoint/token argument names and order."""
+        return await self.list(resource_server_endpoint, query, access_token)
+
+    @_async_sdk_operation("outgoing_payments.get")
+    async def get(self, url: UrlInput, access_token: str) -> OutgoingPayment:
+        """Read the plain payment response from the complete returned resource URL."""
+        url = validate_request_url(url)
+        result = await _async_execute_request(
+            self.http_client,
+            "GET",
+            url,
+            OutgoingPayment,
+            access_token=access_token,
+            signer=self,
+        )
+        return _validate_outgoing_payment(result, method="GET", url=url, status=200)
+
+    @_async_sdk_operation("outgoing_payments.get")
+    async def get_outgoing_payment(
+        self, payment_id: str, resource_server_endpoint: str, access_token: str
+    ) -> OutgoingPaymentWithSpentAmounts:
+        """Validate the plain wire result, then retain the compatibility result type."""
+        url = _append_url_path(
+            resource_server_endpoint,
+            f"/outgoing-payments/{payment_id}",
+            strip_trailing_slashes=True,
+        )
+        result = await self.get(url, access_token)
+        return OutgoingPaymentWithSpentAmounts.model_validate(
+            result.model_dump(mode="python", exclude_unset=True)
+        )
+
+    @_async_sdk_operation("outgoing_payments.get_grant_spent_amounts")
+    async def get_grant_spent_amounts(
+        self, url: UrlInput, access_token: str
+    ) -> OutgoingPaymentGrant:
+        """Read the grant's current spending with the supplied access token."""
+        url = _append_url_path(
+            url, "/outgoing-payment-grant", strip_trailing_slashes=True
+        )
+        return await _async_execute_request(
+            self.http_client,
+            "GET",
+            url,
+            OutgoingPaymentGrant,
+            access_token=access_token,
+            signer=self,
+        )

@@ -668,6 +668,34 @@ Creation returns `OutgoingPaymentWithSpentAmounts`, including optional grant-spe
 
 The existing `post_create_payment(payment, resource_server_endpoint, access_token)` and `get_outgoing_payment(payment_id, resource_server_endpoint, access_token)` helpers retain their parameter names and order and delegate to these methods. Their conventional paths preserve base queries. The old getter validates the plain wire response first, then preserves its existing `OutgoingPaymentWithSpentAmounts` Python return type with absent optional spent fields. Fields omitted by the server stay unset in the adapted model.
 
+Use `AsyncOutgoingPayments` with the same `OutgoingPaymentRequest` models for native async operations:
+
+```python
+import logging
+
+from open_payments_sdk import AsyncHttpClient
+from open_payments_sdk.api.async_resource import AsyncOutgoingPayments
+
+async def create_and_read_outgoing(
+    key_id, private_key, resource_server, payment_request,
+    create_access_token, read_access_token,
+):
+    async with AsyncHttpClient(10) as transport:
+        outgoing = AsyncOutgoingPayments(
+            keyid=key_id,
+            private_key=private_key,
+            logger=logging.getLogger(__name__),
+            http_client=transport,
+        )
+        created = await outgoing.create(
+            resource_server, payment_request, create_access_token
+        )
+        current = await outgoing.get(created.id, read_access_token)
+        return created, current
+```
+
+Creation returns `OutgoingPaymentWithSpentAmounts` and canonical retrieval returns `OutgoingPayment`, as with the synchronous methods. Within the open transport context, use `await outgoing.list(resource_server, query, access_token)` for one page, or `await outgoing.get_grant_spent_amounts(resource_server, access_token)` for the current grant's spending. Await the three compatibility helpers as well; the getter retains its adapted return type. Each call uses the supplied access token without caching results or retrying. Cancellation propagates; a dispatched creation may have sent a payment even if its response was not received. Reconcile the outcome before starting another payment attempt.
+
 ## Outgoing grant-spent amounts
 
 Read the spent amounts for the outgoing payment grant corresponding to the supplied current access token:
